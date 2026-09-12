@@ -690,22 +690,12 @@ export default function MapView({ isActive = true }) {
   const provincesLayerRef = useRef(null);
   const markersLayerRef = useRef(null);
 
-  // Dual GPU Canvas Renderers:
-  // 1. Overview renderer for Level 1 Continents & Level 2 Countries: padding 2.5 keeps panning 100% seamless
-  const overviewRendererRef = useRef(null);
-  if (!overviewRendererRef.current) {
-    overviewRendererRef.current = L.canvas({
-      padding: 2.5, // 250% extra buffer = never hits blank edge during panning across oceans
-      tolerance: 5
-    });
-  }
-
-  // 2. High-performance Provinces renderer for Level 3:
-  // padding 1.0 provides a full screen width buffer in every direction
-  const provincesRendererRef = useRef(null);
-  if (!provincesRendererRef.current) {
-    provincesRendererRef.current = L.canvas({
-      padding: 1.0,
+  // Unified GPU Canvas Vector Renderer (Single hardware-accelerated surface):
+  // Using a single renderer prevents multiple canvas elements from stacking and blocking mouse events
+  const canvasRendererRef = useRef(null);
+  if (!canvasRendererRef.current) {
+    canvasRendererRef.current = L.canvas({
+      padding: 1.0, // 100% extra screen buffer
       tolerance: 4
     });
   }
@@ -797,7 +787,7 @@ export default function MapView({ isActive = true }) {
       attributionControl: false,
       worldCopyJump: false, // Explicitly false! Wrapped GeoJSON handles -720° to +720° seamlessly without violent jumping
       preferCanvas: true,
-      renderer: overviewRendererRef.current
+      renderer: canvasRendererRef.current
     });
 
     // Mount GPU Canvas Labels Layer (0 DOM elements, 60fps hardware accelerated)
@@ -829,6 +819,7 @@ export default function MapView({ isActive = true }) {
 
     const onWheelStart = (e) => {
       isWheeling = true;
+      hideHoverPlateRef.current?.();
       wheelMousePosition = map.mouseEventToContainerPoint(e);
       centerPoint = map.getSize().divideBy(2);
       wheelMouseLatLng = map.containerPointToLatLng(wheelMousePosition);
@@ -865,9 +856,14 @@ export default function MapView({ isActive = true }) {
         cancelAnimationFrame(zoomAnimationId);
         zoomAnimationId = null;
       }
-      if (isMoved) {
+      if (isMoved || map._moving) {
         map._moveEnd(true);
         isMoved = false;
+      }
+      map._moving = false;
+      map._animatingZoom = false;
+      if (canvasRendererRef.current) {
+        canvasRendererRef.current._update();
       }
     };
 
@@ -878,9 +874,14 @@ export default function MapView({ isActive = true }) {
       if (!map.getCenter().equals(prevCenter) || map.getZoom() !== prevZoom) {
         isWheeling = false;
         zoomAnimationId = null;
-        if (isMoved) {
+        if (isMoved || map._moving) {
           map._moveEnd(true);
           isMoved = false;
+        }
+        map._moving = false;
+        map._animatingZoom = false;
+        if (canvasRendererRef.current) {
+          canvasRendererRef.current._update();
         }
         return;
       }
@@ -889,12 +890,17 @@ export default function MapView({ isActive = true }) {
       const diff = goalZoom - currentZ;
 
       if (Math.abs(diff) < 0.0005) {
-        if (isMoved) {
+        if (isMoved || map._moving) {
           map._moveEnd(true);
           isMoved = false;
         }
+        map._moving = false;
+        map._animatingZoom = false;
         isWheeling = false;
         zoomAnimationId = null;
+        if (canvasRendererRef.current) {
+          canvasRendererRef.current._update();
+        }
         return;
       }
 
@@ -1039,7 +1045,7 @@ export default function MapView({ isActive = true }) {
     const epochPlates = currentEpoch?.platesData || {};
 
     const contLayer = L.geoJSON(continentsGeo, {
-      renderer: overviewRendererRef.current,
+      renderer: canvasRendererRef.current,
       style: (feature) => {
         const id = feature.properties?.id || feature.properties?.name;
         const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
@@ -1048,7 +1054,7 @@ export default function MapView({ isActive = true }) {
         return {
           noClip: true,
           fillColor: customColor || '#38bdf8', // Default bright blue (#38BDF8)
-          fillOpacity: customColor ? 0.95 : 0.88,
+          fillOpacity: 1.0,
           color: 'rgba(255, 255, 255, 0.65)', // Scheme 1: Prominent continent boundary line
           weight: 2.5,
           lineJoin: 'round'
@@ -1200,7 +1206,7 @@ export default function MapView({ isActive = true }) {
     const epochPlates = currentEpoch?.platesData || {};
 
     const geoLayer = L.geoJSON(countriesGeo, {
-      renderer: overviewRendererRef.current,
+      renderer: canvasRendererRef.current,
       style: (feature) => {
         const id = feature.properties?.id || feature.properties?.name;
         const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
@@ -1299,7 +1305,7 @@ export default function MapView({ isActive = true }) {
     const epochPlates = currentEpoch?.platesData || {};
 
     const provLayer = L.geoJSON(provincesGeo, {
-      renderer: provincesRendererRef.current,
+      renderer: canvasRendererRef.current,
       style: (feature) => {
         const id = feature.properties?.id || feature.properties?.name;
         const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
@@ -1390,10 +1396,14 @@ export default function MapView({ isActive = true }) {
   }, [countryLabels, provinceLabels, currentEpoch?.platesData]);
 
   useEffect(() => {
+    hideHoverPlate();
     if (canvasLabelsLayerRef.current) {
       canvasLabelsLayerRef.current._update();
     }
-  }, [currentLOD]);
+    if (canvasRendererRef.current) {
+      canvasRendererRef.current._update();
+    }
+  }, [currentLOD, hideHoverPlate]);
 
   // Update Interactive Location Markers on Map (Wrapped across all world copies)
   useEffect(() => {
