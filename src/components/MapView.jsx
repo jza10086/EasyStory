@@ -131,6 +131,29 @@ const CanvasLabelsLayer = L.Layer.extend({
     this._countryLabels = options?.countryLabels || [];
     this._provinceLabels = options?.provinceLabels || [];
     this._platesData = options?.platesData || {};
+    this._isFrozen = false;
+    this._countryGrid = this._buildSpatialGrid(this._countryLabels);
+    this._provinceGrid = this._buildSpatialGrid(this._provinceLabels);
+  },
+
+  _buildSpatialGrid: function (labels) {
+    if (!labels || labels.length === 0) return null;
+    const GRID_SIZE = 10;
+    const grid = new Map();
+    for (let i = 0; i < labels.length; i++) {
+      const item = labels[i];
+      const row = Math.max(0, Math.min(17, Math.floor((item.lat + 90) / GRID_SIZE)));
+      const normLng = (((item.lng + 180) % 360 + 360) % 360) - 180;
+      const col = Math.max(0, Math.min(35, Math.floor((normLng + 180) / GRID_SIZE)));
+      const key = `${row}_${col}`;
+      let bucket = grid.get(key);
+      if (!bucket) {
+        bucket = [];
+        grid.set(key, bucket);
+      }
+      bucket.push(item);
+    }
+    return grid;
   },
 
   onAdd: function (map) {
@@ -160,14 +183,24 @@ const CanvasLabelsLayer = L.Layer.extend({
     map.off('move zoom resize viewreset', this._onRender);
   },
 
-  updateData: function (data) {
-    if (data.countryLabels) this._countryLabels = data.countryLabels;
-    if (data.provinceLabels) this._provinceLabels = data.provinceLabels;
-    if (data.platesData !== undefined) this._platesData = data.platesData;
-    this._update();
+  setFrozen: function (frozen) {
+    this._isFrozen = Boolean(frozen);
   },
 
-  _update: function () {
+  updateData: function (data) {
+    if (data.countryLabels) {
+      this._countryLabels = data.countryLabels;
+      this._countryGrid = this._buildSpatialGrid(this._countryLabels);
+    }
+    if (data.provinceLabels) {
+      this._provinceLabels = data.provinceLabels;
+      this._provinceGrid = this._buildSpatialGrid(this._provinceLabels);
+    }
+    if (data.platesData !== undefined) this._platesData = data.platesData;
+    this._update(true);
+  },
+
+  _update: function (force = false) {
     if (!this._map || !this._canvas) return;
 
     const map = this._map;
@@ -176,6 +209,11 @@ const CanvasLabelsLayer = L.Layer.extend({
 
     const topLeft = map.containerPointToLayerPoint([0, 0]);
     L.DomUtil.setPosition(this._canvas, topLeft);
+
+    // During active wheel zooming, freeze recalculation of labels to maintain pure 60fps!
+    if (this._isFrozen && !force) {
+      return;
+    }
 
     const dpr = window.devicePixelRatio || 1;
     const targetW = Math.round(size.x * dpr);
@@ -196,25 +234,57 @@ const CanvasLabelsLayer = L.Layer.extend({
     const zoom = map.getZoom();
     const lod = zoom < 2.5 ? 1 : (zoom < 4.5 ? 2 : 3);
     const bounds = map.getBounds();
-    const padBounds = bounds.pad(0.2); // 20% margin to prevent edge pop-in
+    const padBounds = bounds.pad(0.15); // 15% margin
     const south = padBounds.getSouth();
     const north = padBounds.getNorth();
     const west = padBounds.getWest();
     const east = padBounds.getEast();
 
     const offsets = [-720, -360, 0, 360, 720];
+    const activeOffsets = [];
+    for (let o = 0; o < offsets.length; o++) {
+      const off = offsets[o];
+      if (off + 180 >= west && off - 180 <= east) {
+        activeOffsets.push(off);
+      }
+    }
+    if (activeOffsets.length === 0) activeOffsets.push(0);
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
     ctx.miterLimit = 2;
 
-    if (lod === 2 && this._countryLabels && this._countryLabels.length > 0) {
-      // Level 2: Country Labels (国家板块)
-      const minArea = zoom >= 3.5 ? 10 : 22;
+    const GRID_SIZE = 10;
+    const minRow = Math.max(0, Math.min(17, Math.floor((south + 90) / GRID_SIZE)));
+    const maxRow = Math.max(0, Math.min(17, Math.floor((north + 90) / GRID_SIZE)));
+    const minCol = Math.floor((west + 180) / GRID_SIZE);
+    const maxCol = Math.floor((east + 180) / GRID_SIZE);
 
-      for (let i = 0; i < this._countryLabels.length; i++) {
-        const c = this._countryLabels[i];
+    if (lod === 2 && this._countryGrid) {
+      // Level 2: Country Labels (国家板块) via Spatial Grid
+      const minArea = zoom >= 3.5 ? 10 : 22;
+      const candidateSet = new Set();
+      const candidates = [];
+
+      for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+          const normCol = ((c % 36) + 36) % 36;
+          const bucket = this._countryGrid.get(`${r}_${normCol}`);
+          if (bucket) {
+            for (let k = 0; k < bucket.length; k++) {
+              const item = bucket[k];
+              if (!candidateSet.has(item)) {
+                candidateSet.add(item);
+                candidates.push(item);
+              }
+            }
+          }
+        }
+      }
+
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
         if ((c.area || 0) < minArea) continue;
         if (c.lat < south || c.lat > north) continue;
 
@@ -222,8 +292,8 @@ const CanvasLabelsLayer = L.Layer.extend({
         const plateInfo = this._platesData[c.id] || this._platesData[c.name];
         const displayName = plateInfo?.name || c.name;
 
-        for (let j = 0; j < offsets.length; j++) {
-          const lng = c.lng + offsets[j];
+        for (let j = 0; j < activeOffsets.length; j++) {
+          const lng = c.lng + activeOffsets[j];
           if (lng < west || lng > east) continue;
 
           const pt = map.latLngToContainerPoint([c.lat, lng]);
@@ -231,7 +301,7 @@ const CanvasLabelsLayer = L.Layer.extend({
 
           const textY = hasSub ? pt.y - 4 : pt.y;
 
-          // Country Name (Chinese / Custom Plate Name)
+          // Country Name
           ctx.font = 'bold 12px "Microsoft YaHei", -apple-system, sans-serif';
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
           ctx.lineWidth = 3;
@@ -239,7 +309,7 @@ const CanvasLabelsLayer = L.Layer.extend({
           ctx.fillStyle = '#0f172a';
           ctx.fillText(displayName, pt.x, textY);
 
-          // Country Name (English Subtext)
+          // Country Name Subtext
           if (hasSub) {
             ctx.font = '600 8.5px monospace, sans-serif';
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
@@ -250,12 +320,30 @@ const CanvasLabelsLayer = L.Layer.extend({
           }
         }
       }
-    } else if (lod === 3 && this._provinceLabels && this._provinceLabels.length > 0) {
-      // Level 3: Province & State Labels (省州板块)
+    } else if (lod === 3 && this._provinceGrid) {
+      // Level 3: Province & State Labels (省州板块) via Spatial Grid
       const minArea = zoom >= 6.5 ? 0.2 : (zoom >= 5.5 ? 1.2 : 3.5);
+      const candidateSet = new Set();
+      const candidates = [];
 
-      for (let i = 0; i < this._provinceLabels.length; i++) {
-        const p = this._provinceLabels[i];
+      for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+          const normCol = ((c % 36) + 36) % 36;
+          const bucket = this._provinceGrid.get(`${r}_${normCol}`);
+          if (bucket) {
+            for (let k = 0; k < bucket.length; k++) {
+              const item = bucket[k];
+              if (!candidateSet.has(item)) {
+                candidateSet.add(item);
+                candidates.push(item);
+              }
+            }
+          }
+        }
+      }
+
+      for (let i = 0; i < candidates.length; i++) {
+        const p = candidates[i];
         if ((p.area || 0) < minArea) continue;
         if (p.lat < south || p.lat > north) continue;
 
@@ -263,8 +351,8 @@ const CanvasLabelsLayer = L.Layer.extend({
         const plateInfo = this._platesData[p.id] || this._platesData[p.name];
         const displayName = plateInfo?.name || p.name;
 
-        for (let j = 0; j < offsets.length; j++) {
-          const lng = p.lng + offsets[j];
+        for (let j = 0; j < activeOffsets.length; j++) {
+          const lng = p.lng + activeOffsets[j];
           if (lng < west || lng > east) continue;
 
           const pt = map.latLngToContainerPoint([p.lat, lng]);
@@ -272,7 +360,7 @@ const CanvasLabelsLayer = L.Layer.extend({
 
           const textY = hasSub ? pt.y - 3 : pt.y;
 
-          // Province Name (Chinese/Local / Custom Plate Name)
+          // Province Name
           ctx.font = 'bold 11px "Microsoft YaHei", -apple-system, sans-serif';
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
           ctx.lineWidth = 2.5;
@@ -280,7 +368,7 @@ const CanvasLabelsLayer = L.Layer.extend({
           ctx.fillStyle = '#0f172a';
           ctx.fillText(displayName, pt.x, textY);
 
-          // Province Name (English Subtext)
+          // Province Name Subtext
           if (hasSub) {
             ctx.font = '600 7.5px monospace, sans-serif';
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
@@ -824,6 +912,7 @@ export default function MapView({ isActive = true }) {
 
     const onWheelStart = (e) => {
       isWheeling = true;
+      canvasLabelsLayerRef.current?.setFrozen(true);
       hideHoverPlateRef.current?.();
       wheelMousePosition = map.mouseEventToContainerPoint(e);
       centerPoint = map.getSize().divideBy(2);
@@ -842,6 +931,7 @@ export default function MapView({ isActive = true }) {
     };
 
     const onWheeling = (e) => {
+      canvasLabelsLayerRef.current?.setFrozen(true);
       // Single notch deltaY is typically ±100px -> changes zoom by ~0.1
       const delta = -e.deltaY * 0.001;
       const clampedDelta = Math.max(-0.5, Math.min(0.5, delta));
@@ -873,6 +963,9 @@ export default function MapView({ isActive = true }) {
       lastReportedZoom = finalZ;
       setZoomLevel(finalZ);
 
+      canvasLabelsLayerRef.current?.setFrozen(false);
+      canvasLabelsLayerRef.current?._update(true);
+
       if (canvasRendererRef.current) {
         canvasRendererRef.current._update();
       }
@@ -896,6 +989,9 @@ export default function MapView({ isActive = true }) {
         lastReportedZoom = finalZ;
         setZoomLevel(finalZ);
 
+        canvasLabelsLayerRef.current?.setFrozen(false);
+        canvasLabelsLayerRef.current?._update(true);
+
         if (canvasRendererRef.current) {
           canvasRendererRef.current._update();
         }
@@ -918,6 +1014,9 @@ export default function MapView({ isActive = true }) {
         const finalZ = map.getZoom();
         lastReportedZoom = finalZ;
         setZoomLevel(finalZ);
+
+        canvasLabelsLayerRef.current?.setFrozen(false);
+        canvasLabelsLayerRef.current?._update(true);
 
         if (canvasRendererRef.current) {
           canvasRendererRef.current._update();
