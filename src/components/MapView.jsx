@@ -2,6 +2,11 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useStoryStore } from '../store/useStoryStore';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+
+// Configure Web Worker URL to bypass bundler resolution and guarantee offline execution
+if (typeof window !== 'undefined') {
+  maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs');
+}
 import {
   preloadGeoAssets,
   getPreloadedContinentsGeo,
@@ -129,19 +134,32 @@ function oceanWatermarksToGeoJSON(continentsData) {
   return { type: 'FeatureCollection', features };
 }
 
-function getPlateColorExpression(platesData, defaultColor = '#38bdf8') {
-  const matchEntries = [];
-  if (platesData) {
-    for (const [key, val] of Object.entries(platesData)) {
-      if (val && val.color) {
-        matchEntries.push(key, val.color);
-      }
+function getPlateColorExpression(epoch, defaultColor = '#38bdf8') {
+  const matchMap = new Map();
+  if (epoch?.regionColors) {
+    for (const [key, color] of Object.entries(epoch.regionColors)) {
+      if (color) matchMap.set(key, color);
     }
   }
-  if (matchEntries.length === 0) {
+  const platesData = epoch?.platesData || (epoch && !epoch.regionColors && !epoch.id ? epoch : {});
+  if (platesData) {
+    for (const [key, val] of Object.entries(platesData)) {
+      if (val && val.color) matchMap.set(key, val.color);
+    }
+  }
+  if (matchMap.size === 0) {
     return defaultColor;
   }
-  return ['match', ['get', 'id'], ...matchEntries, defaultColor];
+  const matchEntries = [];
+  for (const [key, color] of matchMap.entries()) {
+    matchEntries.push(key, color);
+  }
+  return [
+    'match',
+    ['coalesce', ['get', 'id'], ['get', 'name'], ''],
+    ...matchEntries,
+    defaultColor
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -534,18 +552,78 @@ export default function MapView({ isActive = true }) {
   const [provinceLabels, setProvinceLabels] = useState(() => getPreloadedProvinceLabels());
   const [continentsData, setContinentsData] = useState(() => getPreloadedContinents());
 
+  const continentsGeoRef = useRef(continentsGeo);
+  continentsGeoRef.current = continentsGeo;
+  const countriesGeoRef = useRef(countriesGeo);
+  countriesGeoRef.current = countriesGeo;
+  const provincesGeoRef = useRef(provincesGeo);
+  provincesGeoRef.current = provincesGeo;
+  const countryLabelsRef = useRef(countryLabels);
+  countryLabelsRef.current = countryLabels;
+  const provinceLabelsRef = useRef(provinceLabels);
+  provinceLabelsRef.current = provinceLabels;
+  const continentsDataRef = useRef(continentsData);
+  continentsDataRef.current = continentsData;
+
+  const updateMapSources = useCallback((map) => {
+    if (!map || !isMapLoadedRef.current) return;
+
+    const cGeo = continentsGeoRef.current || getPreloadedContinentsGeo();
+    if (cGeo && map.getSource('continents')) {
+      map.getSource('continents').setData(cGeo);
+    }
+    const ctryGeo = countriesGeoRef.current || getPreloadedCountries();
+    if (ctryGeo && map.getSource('countries')) {
+      map.getSource('countries').setData(ctryGeo);
+    }
+    const provGeo = provincesGeoRef.current || getPreloadedProvinces();
+    if (provGeo && map.getSource('provinces')) {
+      map.getSource('provinces').setData(provGeo);
+    }
+    const cData = continentsDataRef.current || getPreloadedContinents();
+    if (cData && map.getSource('continent-watermarks')) {
+      map.getSource('continent-watermarks').setData(continentsWatermarksToGeoJSON(cData));
+    }
+    if (cData && map.getSource('ocean-watermarks')) {
+      map.getSource('ocean-watermarks').setData(oceanWatermarksToGeoJSON(cData));
+    }
+    const cLabels = countryLabelsRef.current || getPreloadedCountryLabels();
+    if (cLabels && map.getSource('country-labels')) {
+      map.getSource('country-labels').setData(labelsToGeoJSON(cLabels, currentEpochRef.current?.platesData));
+    }
+    const pLabels = provinceLabelsRef.current || getPreloadedProvinceLabels();
+    if (pLabels && map.getSource('province-labels')) {
+      map.getSource('province-labels').setData(labelsToGeoJSON(pLabels, currentEpochRef.current?.platesData));
+    }
+  }, []);
+
   useEffect(() => {
     if (!continentsGeo || !countriesGeo || !provincesGeo || !countryLabels || !provinceLabels || !continentsData) {
       preloadGeoAssets().then(() => {
-        setContinentsGeo(getPreloadedContinentsGeo());
-        setCountriesGeo(getPreloadedCountries());
-        setProvincesGeo(getPreloadedProvinces());
-        setCountryLabels(getPreloadedCountryLabels());
-        setProvinceLabels(getPreloadedProvinceLabels());
-        setContinentsData(getPreloadedContinents());
+        const cGeo = getPreloadedContinentsGeo();
+        const ctry = getPreloadedCountries();
+        const prov = getPreloadedProvinces();
+        const cl = getPreloadedCountryLabels();
+        const pl = getPreloadedProvinceLabels();
+        const cd = getPreloadedContinents();
+        setContinentsGeo(cGeo);
+        setCountriesGeo(ctry);
+        setProvincesGeo(prov);
+        setCountryLabels(cl);
+        setProvinceLabels(pl);
+        setContinentsData(cd);
+        continentsGeoRef.current = cGeo;
+        countriesGeoRef.current = ctry;
+        provincesGeoRef.current = prov;
+        countryLabelsRef.current = cl;
+        provinceLabelsRef.current = pl;
+        continentsDataRef.current = cd;
+        if (mapInstanceRef.current && isMapLoadedRef.current) {
+          updateMapSources(mapInstanceRef.current);
+        }
       });
     }
-  }, [continentsGeo, countriesGeo, provincesGeo, countryLabels, provinceLabels, continentsData]);
+  }, [continentsGeo, countriesGeo, provincesGeo, countryLabels, provinceLabels, continentsData, updateMapSources]);
 
   // Window resize invalidation
   useEffect(() => {
@@ -635,7 +713,7 @@ export default function MapView({ isActive = true }) {
       // 1. Continents Source & Layers (Zoom 0 ~ 2.5)
       map.addSource('continents', {
         type: 'geojson',
-        data: continentsGeo || { type: 'FeatureCollection', features: [] }
+        data: continentsGeoRef.current || getPreloadedContinentsGeo() || { type: 'FeatureCollection', features: [] }
       });
 
       map.addLayer({
@@ -644,7 +722,7 @@ export default function MapView({ isActive = true }) {
         source: 'continents',
         maxzoom: 2.5,
         paint: {
-          'fill-color': getPlateColorExpression(currentEpochRef.current?.platesData, '#38bdf8'),
+          'fill-color': getPlateColorExpression(currentEpochRef.current, '#38bdf8'),
           'fill-opacity': 1.0
         }
       });
@@ -675,7 +753,7 @@ export default function MapView({ isActive = true }) {
       // 2. Countries Source & Layers (Zoom 2.5 ~ 4.5)
       map.addSource('countries', {
         type: 'geojson',
-        data: countriesGeo || { type: 'FeatureCollection', features: [] }
+        data: countriesGeoRef.current || getPreloadedCountries() || { type: 'FeatureCollection', features: [] }
       });
 
       map.addLayer({
@@ -685,7 +763,7 @@ export default function MapView({ isActive = true }) {
         minzoom: 2.5,
         maxzoom: 4.5,
         paint: {
-          'fill-color': getPlateColorExpression(currentEpochRef.current?.platesData, '#38bdf8'),
+          'fill-color': getPlateColorExpression(currentEpochRef.current, '#38bdf8'),
           'fill-opacity': 1.0
         }
       });
@@ -718,7 +796,7 @@ export default function MapView({ isActive = true }) {
       // 3. Provinces Source & Layers (Zoom 4.5 ~ 14)
       map.addSource('provinces', {
         type: 'geojson',
-        data: provincesGeo || { type: 'FeatureCollection', features: [] }
+        data: provincesGeoRef.current || getPreloadedProvinces() || { type: 'FeatureCollection', features: [] }
       });
 
       map.addLayer({
@@ -727,7 +805,7 @@ export default function MapView({ isActive = true }) {
         source: 'provinces',
         minzoom: 4.5,
         paint: {
-          'fill-color': getPlateColorExpression(currentEpochRef.current?.platesData, '#38bdf8'),
+          'fill-color': getPlateColorExpression(currentEpochRef.current, '#38bdf8'),
           'fill-opacity': 1.0
         }
       });
@@ -758,7 +836,7 @@ export default function MapView({ isActive = true }) {
       // 4. Continents & Ocean Watermark Symbols
       map.addSource('continent-watermarks', {
         type: 'geojson',
-        data: continentsWatermarksToGeoJSON(continentsData)
+        data: continentsWatermarksToGeoJSON(continentsDataRef.current || getPreloadedContinents())
       });
 
       map.addLayer({
@@ -783,7 +861,7 @@ export default function MapView({ isActive = true }) {
 
       map.addSource('ocean-watermarks', {
         type: 'geojson',
-        data: oceanWatermarksToGeoJSON(continentsData)
+        data: oceanWatermarksToGeoJSON(continentsDataRef.current || getPreloadedContinents())
       });
 
       map.addLayer({
@@ -809,7 +887,7 @@ export default function MapView({ isActive = true }) {
       // 5. Country Labels (Zoom 2.5 ~ 4.5)
       map.addSource('country-labels', {
         type: 'geojson',
-        data: labelsToGeoJSON(countryLabels, currentEpochRef.current?.platesData)
+        data: labelsToGeoJSON(countryLabelsRef.current || getPreloadedCountryLabels(), currentEpochRef.current?.platesData)
       });
 
       map.addLayer({
@@ -842,7 +920,7 @@ export default function MapView({ isActive = true }) {
       // 6. Province Labels (Zoom 4.5 ~ 14)
       map.addSource('province-labels', {
         type: 'geojson',
-        data: labelsToGeoJSON(provinceLabels, currentEpochRef.current?.platesData)
+        data: labelsToGeoJSON(provinceLabelsRef.current || getPreloadedProvinceLabels(), currentEpochRef.current?.platesData)
       });
 
       map.addLayer({
@@ -931,6 +1009,7 @@ export default function MapView({ isActive = true }) {
         });
 
         map.on('click', layerId, (e) => {
+          if (e.originalEvent) e.originalEvent._plateClicked = true;
           if (isAddingLocationRef.current) return;
           if (!e.features || !e.features.length) return;
 
@@ -966,10 +1045,17 @@ export default function MapView({ isActive = true }) {
           });
         });
       });
+
+      isMapLoadedRef.current = true;
+      updateMapSources(map);
+      setTimeout(() => {
+        map.resize();
+      }, 50);
     });
 
     // Map-level click (for pin creation or deselection)
     map.on('click', (e) => {
+      if (e.originalEvent?._plateClicked) return;
       hideHoverPlateRef.current?.();
 
       if (isAddingLocationRef.current) {
@@ -1019,45 +1105,26 @@ export default function MapView({ isActive = true }) {
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !isMapLoadedRef.current) return;
-
-    if (continentsGeo && map.getSource('continents')) {
-      map.getSource('continents').setData(continentsGeo);
-    }
-    if (countriesGeo && map.getSource('countries')) {
-      map.getSource('countries').setData(countriesGeo);
-    }
-    if (provincesGeo && map.getSource('provinces')) {
-      map.getSource('provinces').setData(provincesGeo);
-    }
-    if (continentsData && map.getSource('continent-watermarks')) {
-      map.getSource('continent-watermarks').setData(continentsWatermarksToGeoJSON(continentsData));
-    }
-    if (continentsData && map.getSource('ocean-watermarks')) {
-      map.getSource('ocean-watermarks').setData(oceanWatermarksToGeoJSON(continentsData));
-    }
-    if (countryLabels && map.getSource('country-labels')) {
-      map.getSource('country-labels').setData(labelsToGeoJSON(countryLabels, currentEpoch?.platesData));
-    }
-    if (provinceLabels && map.getSource('province-labels')) {
-      map.getSource('province-labels').setData(labelsToGeoJSON(provinceLabels, currentEpoch?.platesData));
-    }
-  }, [continentsGeo, countriesGeo, provincesGeo, continentsData, countryLabels, provinceLabels]);
+    updateMapSources(map);
+  }, [continentsGeo, countriesGeo, provincesGeo, continentsData, countryLabels, provinceLabels, updateMapSources]);
 
   // Update plate colors & label text when epoch changes
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !isMapLoadedRef.current) return;
 
-    const colorExpr = getPlateColorExpression(currentEpoch?.platesData, '#38bdf8');
+    const colorExpr = getPlateColorExpression(currentEpoch, '#38bdf8');
     if (map.getLayer('continents-fill')) map.setPaintProperty('continents-fill', 'fill-color', colorExpr);
     if (map.getLayer('countries-fill')) map.setPaintProperty('countries-fill', 'fill-color', colorExpr);
     if (map.getLayer('provinces-fill')) map.setPaintProperty('provinces-fill', 'fill-color', colorExpr);
 
-    if (map.getSource('country-labels') && countryLabels) {
-      map.getSource('country-labels').setData(labelsToGeoJSON(countryLabels, currentEpoch?.platesData));
+    const cLabels = countryLabels || getPreloadedCountryLabels();
+    if (map.getSource('country-labels') && cLabels) {
+      map.getSource('country-labels').setData(labelsToGeoJSON(cLabels, currentEpoch?.platesData));
     }
-    if (map.getSource('province-labels') && provinceLabels) {
-      map.getSource('province-labels').setData(labelsToGeoJSON(provinceLabels, currentEpoch?.platesData));
+    const pLabels = provinceLabels || getPreloadedProvinceLabels();
+    if (map.getSource('province-labels') && pLabels) {
+      map.getSource('province-labels').setData(labelsToGeoJSON(pLabels, currentEpoch?.platesData));
     }
   }, [currentEpoch, countryLabels, provinceLabels]);
 
@@ -1075,7 +1142,7 @@ export default function MapView({ isActive = true }) {
       const eventCount = filteredEvents.filter((t) => t.locationId === loc.id).length;
 
       const el = document.createElement('div');
-      el.className = 'relative group cursor-pointer -translate-x-1/2 -translate-y-1/2';
+      el.className = 'relative group cursor-pointer flex flex-col items-center';
       el.innerHTML = `
         <div class="absolute -inset-2 rounded-full opacity-40 ${
           isSelected ? 'animate-ping' : 'group-hover:animate-ping'
@@ -1112,7 +1179,7 @@ export default function MapView({ isActive = true }) {
         setEditingPlateTarget(null);
       });
 
-      const marker = new maplibregl.Marker({ element: el })
+      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([loc.lng, loc.lat])
         .addTo(map);
 

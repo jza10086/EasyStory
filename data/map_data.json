@@ -3,7 +3,7 @@
     "minYear": -1000,
     "maxYear": 2100,
     "leftBound": -500,
-    "rightBound": -440,
+    "rightBound": 70,
     "currentTime": 2030
   },
   "currentEpochId": "epoch-modern",
