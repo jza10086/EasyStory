@@ -710,7 +710,7 @@ export default function MapView({ isActive = true }) {
     map.on('load', () => {
       isMapLoadedRef.current = true;
 
-      // 1. Continents Source & Layers (Zoom 0 ~ 2.5)
+      // 1. Continents Source & Layers (Zoom 0 ~ 2.8 with smooth cushion)
       map.addSource('continents', {
         type: 'geojson',
         data: continentsGeoRef.current || getPreloadedContinentsGeo() || { type: 'FeatureCollection', features: [] }
@@ -720,10 +720,14 @@ export default function MapView({ isActive = true }) {
         id: 'continents-fill',
         type: 'fill',
         source: 'continents',
-        maxzoom: 2.5,
+        maxzoom: 2.8,
         paint: {
           'fill-color': getPlateColorExpression(currentEpochRef.current, '#38bdf8'),
-          'fill-opacity': 1.0
+          'fill-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            2.3, 1.0,
+            2.7, 0.0
+          ]
         }
       });
 
@@ -731,10 +735,15 @@ export default function MapView({ isActive = true }) {
         id: 'continents-line',
         type: 'line',
         source: 'continents',
-        maxzoom: 2.5,
+        maxzoom: 2.7,
         paint: {
           'line-color': 'rgba(255, 255, 255, 0.65)',
-          'line-width': 2.0
+          'line-width': 2.0,
+          'line-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            2.3, 1.0,
+            2.6, 0.0
+          ]
         }
       });
 
@@ -750,7 +759,7 @@ export default function MapView({ isActive = true }) {
         filter: ['==', ['get', 'id'], '']
       });
 
-      // 2. Countries Source & Layers (Zoom 2.5 ~ 4.5)
+      // 2. Countries Source & Layers (Zoom 2.1 ~ 4.8 with pre-warming & cushion)
       map.addSource('countries', {
         type: 'geojson',
         data: countriesGeoRef.current || getPreloadedCountries() || { type: 'FeatureCollection', features: [] }
@@ -760,11 +769,17 @@ export default function MapView({ isActive = true }) {
         id: 'countries-fill',
         type: 'fill',
         source: 'countries',
-        minzoom: 2.5,
-        maxzoom: 4.5,
+        minzoom: 2.1,
+        maxzoom: 4.8,
         paint: {
           'fill-color': getPlateColorExpression(currentEpochRef.current, '#38bdf8'),
-          'fill-opacity': 1.0
+          'fill-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            2.2, 0.0,
+            2.5, 1.0,
+            4.3, 1.0,
+            4.7, 0.0
+          ]
         }
       });
 
@@ -772,11 +787,18 @@ export default function MapView({ isActive = true }) {
         id: 'countries-line',
         type: 'line',
         source: 'countries',
-        minzoom: 2.5,
-        maxzoom: 4.5,
+        minzoom: 2.3,
+        maxzoom: 4.7,
         paint: {
           'line-color': 'rgba(255, 255, 255, 0.75)',
-          'line-width': 1.8
+          'line-width': 1.8,
+          'line-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            2.3, 0.0,
+            2.5, 1.0,
+            4.3, 1.0,
+            4.6, 0.0
+          ]
         }
       });
 
@@ -793,7 +815,7 @@ export default function MapView({ isActive = true }) {
         filter: ['==', ['get', 'id'], '']
       });
 
-      // 3. Provinces Source & Layers (Zoom 4.5 ~ 14)
+      // 3. Provinces Source & Layers (Zoom 4.1 ~ 14 with pre-warming)
       map.addSource('provinces', {
         type: 'geojson',
         data: provincesGeoRef.current || getPreloadedProvinces() || { type: 'FeatureCollection', features: [] }
@@ -803,10 +825,14 @@ export default function MapView({ isActive = true }) {
         id: 'provinces-fill',
         type: 'fill',
         source: 'provinces',
-        minzoom: 4.5,
+        minzoom: 4.1,
         paint: {
           'fill-color': getPlateColorExpression(currentEpochRef.current, '#38bdf8'),
-          'fill-opacity': 1.0
+          'fill-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            4.2, 0.0,
+            4.5, 1.0
+          ]
         }
       });
 
@@ -814,10 +840,15 @@ export default function MapView({ isActive = true }) {
         id: 'provinces-line',
         type: 'line',
         source: 'provinces',
-        minzoom: 4.5,
+        minzoom: 4.3,
         paint: {
           'line-color': 'rgba(255, 255, 255, 0.55)',
-          'line-width': 1.2
+          'line-width': 1.2,
+          'line-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            4.3, 0.0,
+            4.5, 1.0
+          ]
         }
       });
 
@@ -843,7 +874,7 @@ export default function MapView({ isActive = true }) {
         id: 'continents-watermarks',
         type: 'symbol',
         source: 'continent-watermarks',
-        maxzoom: 2.5,
+        maxzoom: 2.7,
         layout: {
           'text-field': ['get', 'label'],
           'text-font': ['Noto Sans Bold'],
@@ -855,7 +886,12 @@ export default function MapView({ isActive = true }) {
         paint: {
           'text-color': '#0f172a',
           'text-halo-color': 'rgba(255, 255, 255, 0.85)',
-          'text-halo-width': 2.0
+          'text-halo-width': 2.0,
+          'text-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            2.2, 1.0,
+            2.6, 0.0
+          ]
         }
       });
 
@@ -868,7 +904,7 @@ export default function MapView({ isActive = true }) {
         id: 'ocean-watermarks',
         type: 'symbol',
         source: 'ocean-watermarks',
-        maxzoom: 2.5,
+        maxzoom: 2.7,
         layout: {
           'text-field': ['get', 'label'],
           'text-font': ['Noto Sans Regular'],
@@ -880,11 +916,16 @@ export default function MapView({ isActive = true }) {
         paint: {
           'text-color': 'rgba(56, 189, 248, 0.5)',
           'text-halo-color': 'rgba(2, 6, 23, 0.7)',
-          'text-halo-width': 1.2
+          'text-halo-width': 1.2,
+          'text-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            2.2, 1.0,
+            2.6, 0.0
+          ]
         }
       });
 
-      // 5. Country Labels (Zoom 2.5 ~ 4.5)
+      // 5. Country Labels (Zoom 2.3 ~ 4.7 with smooth fade)
       map.addSource('country-labels', {
         type: 'geojson',
         data: labelsToGeoJSON(countryLabelsRef.current || getPreloadedCountryLabels(), currentEpochRef.current?.platesData)
@@ -894,8 +935,8 @@ export default function MapView({ isActive = true }) {
         id: 'country-labels',
         type: 'symbol',
         source: 'country-labels',
-        minzoom: 2.5,
-        maxzoom: 4.5,
+        minzoom: 2.3,
+        maxzoom: 4.7,
         filter: ['>=', ['get', 'area'], 8],
         layout: {
           'text-field': ['get', 'label'],
@@ -913,11 +954,18 @@ export default function MapView({ isActive = true }) {
         paint: {
           'text-color': '#0f172a',
           'text-halo-color': 'rgba(255, 255, 255, 0.95)',
-          'text-halo-width': 2.5
+          'text-halo-width': 2.5,
+          'text-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            2.3, 0.0,
+            2.5, 1.0,
+            4.3, 1.0,
+            4.6, 0.0
+          ]
         }
       });
 
-      // 6. Province Labels (Zoom 4.5 ~ 14)
+      // 6. Province Labels (Zoom 4.3 ~ 14 with smooth fade)
       map.addSource('province-labels', {
         type: 'geojson',
         data: labelsToGeoJSON(provinceLabelsRef.current || getPreloadedProvinceLabels(), currentEpochRef.current?.platesData)
@@ -927,7 +975,7 @@ export default function MapView({ isActive = true }) {
         id: 'province-labels',
         type: 'symbol',
         source: 'province-labels',
-        minzoom: 4.5,
+        minzoom: 4.3,
         layout: {
           'text-field': ['get', 'label'],
           'text-font': ['Noto Sans Bold'],
@@ -945,7 +993,12 @@ export default function MapView({ isActive = true }) {
         paint: {
           'text-color': '#0f172a',
           'text-halo-color': 'rgba(255, 255, 255, 0.95)',
-          'text-halo-width': 2.5
+          'text-halo-width': 2.5,
+          'text-opacity': [
+            'interpolate', ['linear'], ['zoom'],
+            4.3, 0.0,
+            4.5, 1.0
+          ]
         }
       });
 
@@ -958,6 +1011,11 @@ export default function MapView({ isActive = true }) {
         map.on('mousemove', layerId, (e) => {
           if (isAddingLocationRef.current) return;
           if (!e.features || !e.features.length) return;
+
+          const z = map.getZoom();
+          if (layerId === 'continents-fill' && z >= 2.5) return;
+          if (layerId === 'countries-fill' && (z < 2.5 || z >= 4.5)) return;
+          if (layerId === 'provinces-fill' && z < 4.5) return;
 
           const feat = e.features[0];
           const props = feat.properties || {};
@@ -1009,6 +1067,11 @@ export default function MapView({ isActive = true }) {
         });
 
         map.on('click', layerId, (e) => {
+          const z = map.getZoom();
+          if (layerId === 'continents-fill' && z >= 2.5) return;
+          if (layerId === 'countries-fill' && (z < 2.5 || z >= 4.5)) return;
+          if (layerId === 'provinces-fill' && z < 4.5) return;
+
           if (e.originalEvent) e.originalEvent._plateClicked = true;
           if (isAddingLocationRef.current) return;
           if (!e.features || !e.features.length) return;
@@ -1077,6 +1140,10 @@ export default function MapView({ isActive = true }) {
       } else {
         setSelectedMapLocationId(null);
       }
+    });
+
+    map.on('zoomstart', () => {
+      hideHoverPlateRef.current?.();
     });
 
     // Zoom level update (throttled via RAF)
