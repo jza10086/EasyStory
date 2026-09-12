@@ -1,4 +1,5 @@
 @import '@xyflow/react/dist/style.css';
+@import 'maplibre-gl/dist/maplibre-gl.css';
 
 @tailwind base;
 @tailwind components;
@@ -50,13 +51,15 @@
   border-radius: 8px !important;
 }
 
-/* Leaflet Map Vector Basemap Customizations */
+/* Map Vector Basemap Customizations (MapLibre & Leaflet) */
+.maplibregl-map,
 .leaflet-container {
   background: radial-gradient(ellipse at 50% 50%, #0c1c3d 0%, #07122b 60%, #030816 100%) !important;
   font-family: inherit;
   outline: none;
 }
 
+.maplibregl-map:focus,
 .leaflet-container:focus {
   outline: none;
 }

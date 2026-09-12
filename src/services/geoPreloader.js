@@ -12,7 +12,7 @@ export function preloadGeoAssets() {
   if (preloadPromise) return preloadPromise;
 
   preloadPromise = Promise.all([
-    fetch('/geo/continents_wrapped.json')
+    fetch('/geo/continents_geo.json')
       .then((r) => {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -22,17 +22,11 @@ export function preloadGeoAssets() {
         return data;
       })
       .catch((err) => {
-        console.error('Failed to preload continents_wrapped.json, fallback to continents_geo.json', err);
-        return fetch('/geo/continents_geo.json')
-          .then((r) => r.json())
-          .then((data) => {
-            preloadedContinentsGeo = data;
-            return data;
-          })
-          .catch(() => null);
+        console.error('Failed to preload continents_geo.json', err);
+        return null;
       }),
 
-    fetch('/geo/countries_wrapped.json')
+    fetch('/geo/countries.json')
       .then((r) => {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -42,16 +36,11 @@ export function preloadGeoAssets() {
         return data;
       })
       .catch((err) => {
-        console.error('Failed to preload countries_wrapped.json, fallback to countries.json', err);
-        return fetch('/geo/countries.json')
-          .then((r) => r.json())
-          .then((data) => {
-            preloadedCountries = data;
-            return data;
-          });
+        console.error('Failed to preload countries.json', err);
+        return null;
       }),
 
-    fetch('/geo/provinces_wrapped.json')
+    fetch('/geo/provinces.json')
       .then((r) => {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -61,13 +50,8 @@ export function preloadGeoAssets() {
         return data;
       })
       .catch((err) => {
-        console.error('Failed to preload provinces_wrapped.json, fallback to provinces.json', err);
-        return fetch('/geo/provinces.json')
-          .then((r) => r.json())
-          .then((data) => {
-            preloadedProvinces = data;
-            return data;
-          });
+        console.error('Failed to preload provinces.json', err);
+        return null;
       }),
 
     fetch('/geo/country_labels.json')

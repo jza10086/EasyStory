@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useStoryStore } from '../store/useStoryStore';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import {
   preloadGeoAssets,
   getPreloadedContinentsGeo,
@@ -40,19 +40,6 @@ import {
   Maximize2
 } from 'lucide-react';
 
-const MAP_ICONS = {
-  Castle,
-  Anchor,
-  Shield,
-  Skull,
-  Sparkles,
-  Mountain,
-  Flame,
-  Compass,
-  MapPin,
-  Flag
-};
-
 const COLOR_PRESETS = [
   '#ef4444', // Red / Empire
   '#3b82f6', // Blue / Alliance
@@ -64,329 +51,101 @@ const COLOR_PRESETS = [
   '#64748b'  // Slate / Neutral
 ];
 
-// Longitude wrap offsets for infinite 360-degree horizontal seamless loop (-720° to +720°)
-const WRAP_OFFSETS = [-720, -360, 0, 360, 720];
-
-// Shift GeoJSON coordinates by a given longitude offset
-function shiftGeoJSONCoordinates(geometry, offset) {
-  if (!geometry || !geometry.coordinates) return geometry;
-
-  const shiftRing = (ring) => ring.map(([lng, lat]) => [lng + offset, lat]);
-  const shiftPolygon = (poly) => poly.map(shiftRing);
-  const shiftMultiPolygon = (multi) => multi.map(shiftPolygon);
-
-  let newCoordinates;
-  if (geometry.type === 'Point') {
-    newCoordinates = [geometry.coordinates[0] + offset, geometry.coordinates[1]];
-  } else if (geometry.type === 'MultiPoint' || geometry.type === 'LineString') {
-    newCoordinates = geometry.coordinates.map(([lng, lat]) => [lng + offset, lat]);
-  } else if (geometry.type === 'Polygon' || geometry.type === 'MultiLineString') {
-    newCoordinates = shiftPolygon(geometry.coordinates);
-  } else if (geometry.type === 'MultiPolygon') {
-    newCoordinates = shiftMultiPolygon(geometry.coordinates);
-  } else {
-    newCoordinates = geometry.coordinates;
+function labelsToGeoJSON(labels, platesData = {}) {
+  if (!labels || !labels.length) {
+    return { type: 'FeatureCollection', features: [] };
   }
+  const features = [];
+  for (let i = 0; i < labels.length; i++) {
+    const item = labels[i];
+    if (item.lat === undefined || item.lng === undefined) continue;
+    const plate = platesData[item.id] || platesData[item.name] || {};
+    const displayName = plate.name || item.name;
+    const hasSub = item.name_en && item.name_en !== displayName;
+    const labelText = hasSub ? `${displayName}\n${item.name_en}` : displayName;
 
-  return {
-    ...geometry,
-    coordinates: newCoordinates
-  };
-}
-
-// Generate horizontally wrapped GeoJSON with world copies for 100% seamless antimeridian spanning
-function createWrappedGeoJSON(geoJson, offsets = WRAP_OFFSETS) {
-  if (!geoJson || !geoJson.features) return geoJson;
-
-  const wrappedFeatures = [];
-  offsets.forEach((offset) => {
-    geoJson.features.forEach((feature) => {
-      if (offset === 0) {
-        wrappedFeatures.push(feature);
-      } else {
-        wrappedFeatures.push({
-          ...feature,
-          properties: {
-            ...feature.properties,
-            _wrapOffset: offset
-          },
-          geometry: shiftGeoJSONCoordinates(feature.geometry, offset)
-        });
+    features.push({
+      type: 'Feature',
+      id: item.id || `lbl-${i}`,
+      properties: {
+        id: item.id,
+        name: displayName,
+        name_en: item.name_en || '',
+        label: labelText,
+        area: item.area || 0
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [item.lng, item.lat]
       }
     });
-  });
+  }
+  return { type: 'FeatureCollection', features };
+}
 
-  return {
-    ...geoJson,
-    features: wrappedFeatures
-  };
+function continentsWatermarksToGeoJSON(continentsData) {
+  const features = [];
+  if (continentsData?.continents) {
+    continentsData.continents.forEach((cont, idx) => {
+      features.push({
+        type: 'Feature',
+        id: `cont-wm-${idx}`,
+        properties: {
+          name: cont.name,
+          name_en: cont.name_en || '',
+          label: `${cont.name}\n${cont.name_en || ''}`,
+          type: 'continent'
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [cont.lng, cont.lat]
+        }
+      });
+    });
+  }
+  return { type: 'FeatureCollection', features };
+}
+
+function oceanWatermarksToGeoJSON(continentsData) {
+  const features = [];
+  if (continentsData?.oceans) {
+    continentsData.oceans.forEach((ocean, idx) => {
+      features.push({
+        type: 'Feature',
+        id: `ocean-wm-${idx}`,
+        properties: {
+          name: ocean.name,
+          name_en: ocean.name_en || '',
+          label: `~ ${ocean.name} ~\n${ocean.name_en || ''}`,
+          type: 'ocean'
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [ocean.lng, ocean.lat]
+        }
+      });
+    });
+  }
+  return { type: 'FeatureCollection', features };
+}
+
+function getPlateColorExpression(platesData, defaultColor = '#38bdf8') {
+  const matchEntries = [];
+  if (platesData) {
+    for (const [key, val] of Object.entries(platesData)) {
+      if (val && val.color) {
+        matchEntries.push(key, val.color);
+      }
+    }
+  }
+  if (matchEntries.length === 0) {
+    return defaultColor;
+  }
+  return ['match', ['get', 'id'], ...matchEntries, defaultColor];
 }
 
 // ---------------------------------------------------------------------------
-// High-Performance GPU Canvas Labels Layer (0 DOM elements, 60fps hardware accelerated)
-// ---------------------------------------------------------------------------
-const CanvasLabelsLayer = L.Layer.extend({
-  initialize: function (options) {
-    L.setOptions(this, options);
-    this._countryLabels = options?.countryLabels || [];
-    this._provinceLabels = options?.provinceLabels || [];
-    this._platesData = options?.platesData || {};
-    this._isFrozen = false;
-    this._countryGrid = this._buildSpatialGrid(this._countryLabels);
-    this._provinceGrid = this._buildSpatialGrid(this._provinceLabels);
-  },
-
-  _buildSpatialGrid: function (labels) {
-    if (!labels || labels.length === 0) return null;
-    const GRID_SIZE = 10;
-    const grid = new Map();
-    for (let i = 0; i < labels.length; i++) {
-      const item = labels[i];
-      const row = Math.max(0, Math.min(17, Math.floor((item.lat + 90) / GRID_SIZE)));
-      const normLng = (((item.lng + 180) % 360 + 360) % 360) - 180;
-      const col = Math.max(0, Math.min(35, Math.floor((normLng + 180) / GRID_SIZE)));
-      const key = `${row}_${col}`;
-      let bucket = grid.get(key);
-      if (!bucket) {
-        bucket = [];
-        grid.set(key, bucket);
-      }
-      bucket.push(item);
-    }
-    return grid;
-  },
-
-  onAdd: function (map) {
-    this._map = map;
-    this._canvas = L.DomUtil.create('canvas', 'leaflet-canvas-labels-layer');
-    this._canvas.style.pointerEvents = 'none';
-    this._canvas.style.position = 'absolute';
-    this._canvas.style.left = '0';
-    this._canvas.style.top = '0';
-    this._canvas.style.zIndex = '450';
-    this._canvas.style.willChange = 'transform';
-    this._canvas.style.transform = 'translate3d(0, 0, 0)';
-    this._canvas.style.backfaceVisibility = 'hidden';
-
-    map.getPanes().overlayPane.appendChild(this._canvas);
-
-    this._onRender = () => this._update();
-    map.on('move zoom resize viewreset', this._onRender);
-    this._update();
-  },
-
-  onRemove: function (map) {
-    if (this._canvas) {
-      L.DomUtil.remove(this._canvas);
-      this._canvas = null;
-    }
-    map.off('move zoom resize viewreset', this._onRender);
-  },
-
-  setFrozen: function (frozen) {
-    this._isFrozen = Boolean(frozen);
-  },
-
-  updateData: function (data) {
-    if (data.countryLabels) {
-      this._countryLabels = data.countryLabels;
-      this._countryGrid = this._buildSpatialGrid(this._countryLabels);
-    }
-    if (data.provinceLabels) {
-      this._provinceLabels = data.provinceLabels;
-      this._provinceGrid = this._buildSpatialGrid(this._provinceLabels);
-    }
-    if (data.platesData !== undefined) this._platesData = data.platesData;
-    this._update(true);
-  },
-
-  _update: function (force = false) {
-    if (!this._map || !this._canvas) return;
-
-    const map = this._map;
-    const size = map.getSize();
-    if (size.x === 0 || size.y === 0) return;
-
-    const topLeft = map.containerPointToLayerPoint([0, 0]);
-    L.DomUtil.setPosition(this._canvas, topLeft);
-
-    // During active wheel zooming, freeze recalculation of labels to maintain pure 60fps!
-    if (this._isFrozen && !force) {
-      return;
-    }
-
-    const dpr = window.devicePixelRatio || 1;
-    const targetW = Math.round(size.x * dpr);
-    const targetH = Math.round(size.y * dpr);
-
-    if (this._canvas.width !== targetW || this._canvas.height !== targetH) {
-      this._canvas.width = targetW;
-      this._canvas.height = targetH;
-      this._canvas.style.width = `${size.x}px`;
-      this._canvas.style.height = `${size.y}px`;
-    }
-
-    const ctx = this._canvas.getContext('2d');
-    ctx.save();
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, size.x, size.y);
-
-    const zoom = map.getZoom();
-    const lod = zoom < 2.5 ? 1 : (zoom < 4.5 ? 2 : 3);
-    const bounds = map.getBounds();
-    const padBounds = bounds.pad(0.15); // 15% margin
-    const south = padBounds.getSouth();
-    const north = padBounds.getNorth();
-    const west = padBounds.getWest();
-    const east = padBounds.getEast();
-
-    const offsets = [-720, -360, 0, 360, 720];
-    const activeOffsets = [];
-    for (let o = 0; o < offsets.length; o++) {
-      const off = offsets[o];
-      if (off + 180 >= west && off - 180 <= east) {
-        activeOffsets.push(off);
-      }
-    }
-    if (activeOffsets.length === 0) activeOffsets.push(0);
-
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineJoin = 'round';
-    ctx.miterLimit = 2;
-
-    const GRID_SIZE = 10;
-    const minRow = Math.max(0, Math.min(17, Math.floor((south + 90) / GRID_SIZE)));
-    const maxRow = Math.max(0, Math.min(17, Math.floor((north + 90) / GRID_SIZE)));
-    const minCol = Math.floor((west + 180) / GRID_SIZE);
-    const maxCol = Math.floor((east + 180) / GRID_SIZE);
-
-    if (lod === 2 && this._countryGrid) {
-      // Level 2: Country Labels (国家板块) via Spatial Grid
-      const minArea = zoom >= 3.5 ? 10 : 22;
-      const candidateSet = new Set();
-      const candidates = [];
-
-      for (let r = minRow; r <= maxRow; r++) {
-        for (let c = minCol; c <= maxCol; c++) {
-          const normCol = ((c % 36) + 36) % 36;
-          const bucket = this._countryGrid.get(`${r}_${normCol}`);
-          if (bucket) {
-            for (let k = 0; k < bucket.length; k++) {
-              const item = bucket[k];
-              if (!candidateSet.has(item)) {
-                candidateSet.add(item);
-                candidates.push(item);
-              }
-            }
-          }
-        }
-      }
-
-      for (let i = 0; i < candidates.length; i++) {
-        const c = candidates[i];
-        if ((c.area || 0) < minArea) continue;
-        if (c.lat < south || c.lat > north) continue;
-
-        const hasSub = Boolean(c.name_en && c.name_en !== c.name);
-        const plateInfo = this._platesData[c.id] || this._platesData[c.name];
-        const displayName = plateInfo?.name || c.name;
-
-        for (let j = 0; j < activeOffsets.length; j++) {
-          const lng = c.lng + activeOffsets[j];
-          if (lng < west || lng > east) continue;
-
-          const pt = map.latLngToContainerPoint([c.lat, lng]);
-          if (pt.x < -60 || pt.x > size.x + 60 || pt.y < -30 || pt.y > size.y + 30) continue;
-
-          const textY = hasSub ? pt.y - 4 : pt.y;
-
-          // Country Name
-          ctx.font = 'bold 12px "Microsoft YaHei", -apple-system, sans-serif';
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-          ctx.lineWidth = 3;
-          ctx.strokeText(displayName, pt.x, textY);
-          ctx.fillStyle = '#0f172a';
-          ctx.fillText(displayName, pt.x, textY);
-
-          // Country Name Subtext
-          if (hasSub) {
-            ctx.font = '600 8.5px monospace, sans-serif';
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-            ctx.lineWidth = 2;
-            ctx.strokeText(c.name_en, pt.x, pt.y + 8);
-            ctx.fillStyle = '#1e293b';
-            ctx.fillText(c.name_en, pt.x, pt.y + 8);
-          }
-        }
-      }
-    } else if (lod === 3 && this._provinceGrid) {
-      // Level 3: Province & State Labels (省州板块) via Spatial Grid
-      const minArea = zoom >= 6.5 ? 0.2 : (zoom >= 5.5 ? 1.2 : 3.5);
-      const candidateSet = new Set();
-      const candidates = [];
-
-      for (let r = minRow; r <= maxRow; r++) {
-        for (let c = minCol; c <= maxCol; c++) {
-          const normCol = ((c % 36) + 36) % 36;
-          const bucket = this._provinceGrid.get(`${r}_${normCol}`);
-          if (bucket) {
-            for (let k = 0; k < bucket.length; k++) {
-              const item = bucket[k];
-              if (!candidateSet.has(item)) {
-                candidateSet.add(item);
-                candidates.push(item);
-              }
-            }
-          }
-        }
-      }
-
-      for (let i = 0; i < candidates.length; i++) {
-        const p = candidates[i];
-        if ((p.area || 0) < minArea) continue;
-        if (p.lat < south || p.lat > north) continue;
-
-        const hasSub = Boolean(p.name_en && p.name_en !== p.name);
-        const plateInfo = this._platesData[p.id] || this._platesData[p.name];
-        const displayName = plateInfo?.name || p.name;
-
-        for (let j = 0; j < activeOffsets.length; j++) {
-          const lng = p.lng + activeOffsets[j];
-          if (lng < west || lng > east) continue;
-
-          const pt = map.latLngToContainerPoint([p.lat, lng]);
-          if (pt.x < -60 || pt.x > size.x + 60 || pt.y < -30 || pt.y > size.y + 30) continue;
-
-          const textY = hasSub ? pt.y - 3 : pt.y;
-
-          // Province Name
-          ctx.font = 'bold 11px "Microsoft YaHei", -apple-system, sans-serif';
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-          ctx.lineWidth = 2.5;
-          ctx.strokeText(displayName, pt.x, textY);
-          ctx.fillStyle = '#0f172a';
-          ctx.fillText(displayName, pt.x, textY);
-
-          // Province Name Subtext
-          if (hasSub) {
-            ctx.font = '600 7.5px monospace, sans-serif';
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-            ctx.lineWidth = 2;
-            ctx.strokeText(p.name_en, pt.x, pt.y + 7);
-            ctx.fillStyle = '#334155';
-            ctx.fillText(p.name_en, pt.x, pt.y + 7);
-          }
-        }
-      }
-    }
-
-    ctx.restore();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Singleton Plate Hover Card Component (全局单例悬停卡片，物理级杜绝多卡片残留)
+// Singleton Plate Hover Card Component
 // ---------------------------------------------------------------------------
 function PlateHoverCard({ plate, cardRef }) {
   if (!plate || !plate.visible) return null;
@@ -427,7 +186,6 @@ function PlateHoverCard({ plate, cardRef }) {
         opacity: 1
       }}
     >
-      {/* Top Badges & Parent */}
       <div className="flex items-center justify-between text-[10px] pb-2 mb-2 border-b border-slate-800">
         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border font-medium ${badgeClass}`}>
           <span
@@ -446,7 +204,6 @@ function PlateHoverCard({ plate, cardRef }) {
         )}
       </div>
 
-      {/* Title & Subtitle */}
       <div className="mb-2">
         <div className="text-sm font-bold text-white flex items-baseline gap-1.5 leading-tight">
           <span>{name}</span>
@@ -459,7 +216,6 @@ function PlateHoverCard({ plate, cardRef }) {
         )}
       </div>
 
-      {/* Lore / Description */}
       <div className="text-[11px] leading-relaxed mb-2.5">
         {description ? (
           <div className="p-2.5 rounded-lg border border-slate-800 text-slate-300 bg-[#020617] whitespace-pre-wrap max-h-32 overflow-hidden text-ellipsis leading-relaxed">
@@ -470,7 +226,6 @@ function PlateHoverCard({ plate, cardRef }) {
         )}
       </div>
 
-      {/* Footer Action Prompt */}
       <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-sky-400 font-medium">
         <span className="flex items-center gap-1">
           <Edit2 className="w-3 h-3 text-sky-400 inline" />
@@ -482,7 +237,7 @@ function PlateHoverCard({ plate, cardRef }) {
 }
 
 // ---------------------------------------------------------------------------
-// Plate Editor Modal Component (板块编辑面板：名称、颜色、简介、全纪元同步)
+// Plate Editor Modal Component
 // ---------------------------------------------------------------------------
 function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
   const [name, setName] = useState(target?.name || '');
@@ -516,7 +271,6 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
         className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl p-5 space-y-4 text-slate-100"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2.5">
             <div 
@@ -545,7 +299,6 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
           </button>
         </div>
 
-        {/* Current Epoch Notice */}
         <div className="flex items-center justify-between bg-slate-950/60 px-3 py-2 rounded-xl border border-slate-800 text-xs">
           <span className="text-slate-400 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
@@ -554,9 +307,7 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
           <span className="font-semibold text-amber-300">{currentEpoch?.name || '默认纪元'}</span>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          {/* Plate Name Input */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="font-semibold text-slate-300">板块名称 (可自定义)</label>
@@ -579,7 +330,6 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
             />
           </div>
 
-          {/* Color Palette & Custom Picker */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="font-semibold text-slate-300">板块主题颜色 / 势力涂色</label>
@@ -609,7 +359,6 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
                 ))}
               </div>
 
-              {/* Custom Color Native Input */}
               <label 
                 className="w-7 h-7 rounded-lg border border-slate-700 cursor-pointer overflow-hidden flex items-center justify-center shrink-0 hover:scale-110 transition-transform" 
                 title="自定义拾色器"
@@ -625,7 +374,6 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
             </div>
           </div>
 
-          {/* Lore / Description */}
           <div className="space-y-1.5">
             <label className="font-semibold text-slate-300">板块简介 / 地理与历史设定</label>
             <textarea
@@ -637,7 +385,6 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
             />
           </div>
 
-          {/* Sync All Epochs Option */}
           <label className="flex items-center gap-2.5 cursor-pointer select-none bg-slate-950/40 p-2.5 rounded-xl border border-slate-800 hover:border-slate-700 transition-colors">
             <input
               type="checkbox"
@@ -653,7 +400,6 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
             </div>
           </label>
 
-          {/* Action Buttons */}
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
             <button
               type="button"
@@ -707,7 +453,6 @@ export default function MapView({ isActive = true }) {
   const locations = mapData.locations || [];
   const timeline = mapData.timeline || [];
 
-  // Active epoch object
   const currentEpoch = useMemo(() => {
     return epochs.find((ep) => ep.id === currentEpochId) || epochs[0] || null;
   }, [epochs, currentEpochId]);
@@ -718,21 +463,21 @@ export default function MapView({ isActive = true }) {
   }, [currentEpoch]);
 
   // UI state
-  const [zoomLevel, setZoomLevel] = useState(2.2);
+  const [zoomLevel, setZoomLevel] = useState(1.8);
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
   const [isAddingLocation, setIsAddingLocation] = useState(false);
+  const isAddingLocationRef = useRef(isAddingLocation);
+  isAddingLocationRef.current = isAddingLocation;
+
   const [editingLocation, setEditingLocation] = useState(null);
   const [editingEvent, setEditingEvent] = useState(null);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [editingPlateTarget, setEditingPlateTarget] = useState(null);
 
-  // Selected plate for full plate editing (名称、颜色、简介)
-  const [editingPlateTarget, setEditingPlateTarget] = useState(null); // { id, name, originalName, nameEn, type, parentName, color, description }
-
-  // Singleton hovered plate state & card DOM ref (全局单例，物理级杜绝多卡片残留)
+  // Singleton hover card
   const [hoveredPlate, setHoveredPlate] = useState(null);
   const plateHoverCardRef = useRef(null);
 
-  // High-performance direct position updater (0 React re-renders on mousemove)
   const updateHoverCardPos = useCallback((clientX, clientY) => {
     const el = plateHoverCardRef.current;
     if (!el) return;
@@ -756,7 +501,7 @@ export default function MapView({ isActive = true }) {
 
   const showHoverPlate = useCallback(
     (data, clientX, clientY) => {
-      if (isAddingLocation) return;
+      if (isAddingLocationRef.current) return;
       setHoveredPlate({
         ...data,
         visible: true,
@@ -764,7 +509,7 @@ export default function MapView({ isActive = true }) {
         y: clientY
       });
     },
-    [isAddingLocation]
+    []
   );
 
   const hideHoverPlate = useCallback(() => {
@@ -774,29 +519,14 @@ export default function MapView({ isActive = true }) {
   const hideHoverPlateRef = useRef(hideHoverPlate);
   hideHoverPlateRef.current = hideHoverPlate;
 
-  // Leaflet map refs
+  // MapLibre refs
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
-  const continentsVectorLayerRef = useRef(null);
-  const continentsWatermarksLayerRef = useRef(null);
-  const countriesLayerRef = useRef(null);
-  const provincesLayerRef = useRef(null);
-  const markersLayerRef = useRef(null);
+  const isMapLoadedRef = useRef(false);
+  const markersRef = useRef([]);
+  const zoomRafRef = useRef(null);
 
-  // Unified GPU Canvas Vector Renderer (Single hardware-accelerated surface):
-  // Using a single renderer prevents multiple canvas elements from stacking and blocking mouse events
-  const canvasRendererRef = useRef(null);
-  if (!canvasRendererRef.current) {
-    canvasRendererRef.current = L.canvas({
-      padding: 1.0, // 100% extra screen buffer
-      tolerance: 4
-    });
-  }
-
-  // GPU Canvas Labels Layer Ref
-  const canvasLabelsLayerRef = useRef(null);
-
-  // GeoJSON data initialized immediately from global in-memory preloader (0ms instant startup)
+  // Data states from preloader
   const [continentsGeo, setContinentsGeo] = useState(() => getPreloadedContinentsGeo());
   const [countriesGeo, setCountriesGeo] = useState(() => getPreloadedCountries());
   const [provincesGeo, setProvincesGeo] = useState(() => getPreloadedProvinces());
@@ -804,7 +534,6 @@ export default function MapView({ isActive = true }) {
   const [provinceLabels, setProvinceLabels] = useState(() => getPreloadedProvinceLabels());
   const [continentsData, setContinentsData] = useState(() => getPreloadedContinents());
 
-  // Guarantee that if data is still in-flight on cold start, set it as soon as preloader resolves
   useEffect(() => {
     if (!continentsGeo || !countriesGeo || !provincesGeo || !countryLabels || !provinceLabels || !continentsData) {
       preloadGeoAssets().then(() => {
@@ -818,16 +547,15 @@ export default function MapView({ isActive = true }) {
     }
   }, [continentsGeo, countriesGeo, provincesGeo, countryLabels, provinceLabels, continentsData]);
 
-  // Handle workspace switching without remounting (instant size invalidation)
+  // Window resize invalidation
   useEffect(() => {
     if (isActive && mapInstanceRef.current) {
       setTimeout(() => {
-        mapInstanceRef.current?.invalidateSize();
+        mapInstanceRef.current?.resize();
       }, 50);
     }
   }, [isActive]);
 
-  // Filter events strictly by [leftBound, rightBound]
   const filteredEvents = useMemo(() => {
     const left = timelineSettings.leftBound ?? -1000;
     const right = timelineSettings.rightBound ?? 2100;
@@ -837,7 +565,6 @@ export default function MapView({ isActive = true }) {
     });
   }, [timeline, timelineSettings.leftBound, timelineSettings.rightBound]);
 
-  // Filter locations strictly by [leftBound, rightBound] and search keyword
   const filteredLocations = useMemo(() => {
     const left = timelineSettings.leftBound ?? -1000;
     const right = timelineSettings.rightBound ?? 2100;
@@ -856,251 +583,397 @@ export default function MapView({ isActive = true }) {
     });
   }, [locations, timelineSettings.leftBound, timelineSettings.rightBound, searchKeyword]);
 
-  // Selected location object
   const selectedLocation = useMemo(() => {
     return locations.find((l) => l.id === selectedMapLocationId) || null;
   }, [locations, selectedMapLocationId]);
 
-  // Location's timeline events
   const locationTimelineEvents = useMemo(() => {
     if (!selectedMapLocationId) return [];
     return filteredEvents.filter((t) => t.locationId === selectedMapLocationId);
   }, [filteredEvents, selectedMapLocationId]);
 
-  // Initialize Leaflet Map with Canvas Vector Engine and Smooth Wheel Zoom
+  const currentLOD = useMemo(() => {
+    if (zoomLevel < 2.5) return 1;
+    if (zoomLevel < 4.5) return 2;
+    return 3;
+  }, [zoomLevel]);
+
+  // ---------------------------------------------------------------------------
+  // Initialize MapLibre GL Map
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-    const map = L.map(mapContainerRef.current, {
-      center: [25, 10],
-      zoom: 2.0,
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: {
+        version: 8,
+        glyphs: '/fonts/{fontstack}/{range}.pbf',
+        sources: {},
+        layers: [
+          {
+            id: 'background',
+            type: 'background',
+            paint: {
+              'background-color': '#020617'
+            }
+          }
+        ]
+      },
+      localIdeographFontFamily: 'sans-serif',
+      center: [15, 25],
+      zoom: 1.8,
       minZoom: 1.0,
       maxZoom: 14,
-      zoomSnap: 0, // Continuous smooth zoom without notch locking
-      attributionControl: false,
-      worldCopyJump: false, // Explicitly false! Wrapped GeoJSON handles -720° to +720° seamlessly without violent jumping
-      preferCanvas: true,
-      renderer: canvasRendererRef.current
+      renderWorldCopies: true,
+      attributionControl: false
     });
 
-    // Mount GPU Canvas Labels Layer (0 DOM elements, 60fps hardware accelerated)
-    const labelsLayer = new CanvasLabelsLayer({
-      countryLabels,
-      provinceLabels,
-      platesData: currentEpoch?.platesData || {}
-    });
-    labelsLayer.addTo(map);
-    canvasLabelsLayerRef.current = labelsLayer;
+    map.on('load', () => {
+      isMapLoadedRef.current = true;
 
-    // Disable Leaflet's stepped debounce timer and CSS transform scaling animation
-    map.scrollWheelZoom.disable();
+      // 1. Continents Source & Layers (Zoom 0 ~ 2.5)
+      map.addSource('continents', {
+        type: 'geojson',
+        data: continentsGeo || { type: 'FeatureCollection', features: [] }
+      });
 
-    // High-Performance Smooth Wheel Zoom Engine (Hardware CSS Scale + Drag Coordination)
-    let isWheeling = false;
-    let goalZoom = map.getZoom();
-    let prevCenter = map.getCenter();
-    let prevZoom = map.getZoom();
-    let wheelMousePosition = null;
-    let wheelMouseLatLng = null;
-    let centerPoint = null;
-    let zoomAnimationId = null;
-    let wheelEndTimer = null;
-    let isMoved = false;
-
-    let lastReportedZoom = map.getZoom();
-    let zoomRaf = null;
-
-    const onWheelStart = (e) => {
-      isWheeling = true;
-      canvasLabelsLayerRef.current?.setFrozen(true);
-      hideHoverPlateRef.current?.();
-      wheelMousePosition = map.mouseEventToContainerPoint(e);
-      centerPoint = map.getSize().divideBy(2);
-      wheelMouseLatLng = map.containerPointToLatLng(wheelMousePosition);
-      isMoved = false;
-
-      map._stop();
-      if (map._panAnim) map._panAnim.stop();
-
-      goalZoom = map.getZoom();
-      prevCenter = map.getCenter();
-      prevZoom = map.getZoom();
-
-      if (zoomAnimationId) cancelAnimationFrame(zoomAnimationId);
-      zoomAnimationId = requestAnimationFrame(updateWheelZoom);
-    };
-
-    const onWheeling = (e) => {
-      canvasLabelsLayerRef.current?.setFrozen(true);
-      // Single notch deltaY is typically ±100px -> changes zoom by ~0.1
-      const delta = -e.deltaY * 0.001;
-      const clampedDelta = Math.max(-0.5, Math.min(0.5, delta));
-
-      goalZoom = Math.min(14, Math.max(1.0, goalZoom + clampedDelta));
-
-      wheelMousePosition = map.mouseEventToContainerPoint(e);
-      wheelMouseLatLng = map.containerPointToLatLng(wheelMousePosition);
-
-      clearTimeout(wheelEndTimer);
-      wheelEndTimer = setTimeout(onWheelEnd, 140);
-    };
-
-    const onWheelEnd = () => {
-      isWheeling = false;
-      if (zoomAnimationId) {
-        cancelAnimationFrame(zoomAnimationId);
-        zoomAnimationId = null;
-      }
-      if (isMoved || map._moving) {
-        map._moveEnd(true);
-        isMoved = false;
-      }
-      map._moving = false;
-      map._animatingZoom = false;
-
-      // Settle final zoom level and trigger target LOD switch cleanly
-      const finalZ = map.getZoom();
-      lastReportedZoom = finalZ;
-      setZoomLevel(finalZ);
-
-      canvasLabelsLayerRef.current?.setFrozen(false);
-      canvasLabelsLayerRef.current?._update(true);
-
-      if (canvasRendererRef.current) {
-        canvasRendererRef.current._update();
-      }
-    };
-
-    const updateWheelZoom = () => {
-      if (!isWheeling) return;
-
-      // Yield immediately if user dragged the map!
-      if (!map.getCenter().equals(prevCenter) || map.getZoom() !== prevZoom) {
-        isWheeling = false;
-        zoomAnimationId = null;
-        if (isMoved || map._moving) {
-          map._moveEnd(true);
-          isMoved = false;
+      map.addLayer({
+        id: 'continents-fill',
+        type: 'fill',
+        source: 'continents',
+        maxzoom: 2.5,
+        paint: {
+          'fill-color': getPlateColorExpression(currentEpochRef.current?.platesData, '#38bdf8'),
+          'fill-opacity': 1.0
         }
-        map._moving = false;
-        map._animatingZoom = false;
+      });
 
-        const finalZ = map.getZoom();
-        lastReportedZoom = finalZ;
-        setZoomLevel(finalZ);
-
-        canvasLabelsLayerRef.current?.setFrozen(false);
-        canvasLabelsLayerRef.current?._update(true);
-
-        if (canvasRendererRef.current) {
-          canvasRendererRef.current._update();
+      map.addLayer({
+        id: 'continents-line',
+        type: 'line',
+        source: 'continents',
+        maxzoom: 2.5,
+        paint: {
+          'line-color': 'rgba(255, 255, 255, 0.65)',
+          'line-width': 2.0
         }
-        return;
-      }
+      });
 
-      const currentZ = map.getZoom();
-      const diff = goalZoom - currentZ;
+      map.addLayer({
+        id: 'continents-hover',
+        type: 'line',
+        source: 'continents',
+        maxzoom: 2.5,
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 3.5
+        },
+        filter: ['==', ['get', 'id'], '']
+      });
 
-      if (Math.abs(diff) < 0.0005) {
-        if (isMoved || map._moving) {
-          map._moveEnd(true);
-          isMoved = false;
+      // 2. Countries Source & Layers (Zoom 2.5 ~ 4.5)
+      map.addSource('countries', {
+        type: 'geojson',
+        data: countriesGeo || { type: 'FeatureCollection', features: [] }
+      });
+
+      map.addLayer({
+        id: 'countries-fill',
+        type: 'fill',
+        source: 'countries',
+        minzoom: 2.5,
+        maxzoom: 4.5,
+        paint: {
+          'fill-color': getPlateColorExpression(currentEpochRef.current?.platesData, '#38bdf8'),
+          'fill-opacity': 1.0
         }
-        map._moving = false;
-        map._animatingZoom = false;
-        isWheeling = false;
-        zoomAnimationId = null;
+      });
 
-        const finalZ = map.getZoom();
-        lastReportedZoom = finalZ;
-        setZoomLevel(finalZ);
-
-        canvasLabelsLayerRef.current?.setFrozen(false);
-        canvasLabelsLayerRef.current?._update(true);
-
-        if (canvasRendererRef.current) {
-          canvasRendererRef.current._update();
+      map.addLayer({
+        id: 'countries-line',
+        type: 'line',
+        source: 'countries',
+        minzoom: 2.5,
+        maxzoom: 4.5,
+        paint: {
+          'line-color': 'rgba(255, 255, 255, 0.75)',
+          'line-width': 1.8
         }
-        return;
-      }
+      });
 
-      // Buttery smooth Lerp step (0.24 damping factor)
-      const nextZ = currentZ + diff * 0.24;
+      map.addLayer({
+        id: 'countries-hover',
+        type: 'line',
+        source: 'countries',
+        minzoom: 2.5,
+        maxzoom: 4.5,
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 3.2
+        },
+        filter: ['==', ['get', 'id'], '']
+      });
 
-      const delta = wheelMousePosition.subtract(centerPoint);
-      const newCenter = map.unproject(map.project(wheelMouseLatLng, nextZ).subtract(delta), nextZ);
+      // 3. Provinces Source & Layers (Zoom 4.5 ~ 14)
+      map.addSource('provinces', {
+        type: 'geojson',
+        data: provincesGeo || { type: 'FeatureCollection', features: [] }
+      });
 
-      if (!isMoved) {
-        map._moveStart(true, false);
-        isMoved = true;
-      }
+      map.addLayer({
+        id: 'provinces-fill',
+        type: 'fill',
+        source: 'provinces',
+        minzoom: 4.5,
+        paint: {
+          'fill-color': getPlateColorExpression(currentEpochRef.current?.platesData, '#38bdf8'),
+          'fill-opacity': 1.0
+        }
+      });
 
-      map._move(newCenter, nextZ);
-      prevCenter = map.getCenter();
-      prevZoom = map.getZoom();
+      map.addLayer({
+        id: 'provinces-line',
+        type: 'line',
+        source: 'provinces',
+        minzoom: 4.5,
+        paint: {
+          'line-color': 'rgba(255, 255, 255, 0.55)',
+          'line-width': 1.2
+        }
+      });
 
-      zoomAnimationId = requestAnimationFrame(updateWheelZoom);
-    };
+      map.addLayer({
+        id: 'provinces-hover',
+        type: 'line',
+        source: 'provinces',
+        minzoom: 4.5,
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 2.8
+        },
+        filter: ['==', ['get', 'id'], '']
+      });
 
-    const container = mapContainerRef.current;
-    const handleWheel = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+      // 4. Continents & Ocean Watermark Symbols
+      map.addSource('continent-watermarks', {
+        type: 'geojson',
+        data: continentsWatermarksToGeoJSON(continentsData)
+      });
 
-      if (!isWheeling) {
-        onWheelStart(e);
-      }
-      onWheeling(e);
-    };
+      map.addLayer({
+        id: 'continents-watermarks',
+        type: 'symbol',
+        source: 'continent-watermarks',
+        maxzoom: 2.5,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-font': ['Noto Sans Bold'],
+          'text-size': 12,
+          'text-letter-spacing': 0.2,
+          'text-justify': 'center',
+          'text-allow-overlap': true
+        },
+        paint: {
+          'text-color': '#0f172a',
+          'text-halo-color': 'rgba(255, 255, 255, 0.85)',
+          'text-halo-width': 2.0
+        }
+      });
 
-    container.addEventListener('wheel', handleWheel, { passive: false });
+      map.addSource('ocean-watermarks', {
+        type: 'geojson',
+        data: oceanWatermarksToGeoJSON(continentsData)
+      });
 
-    // Drag coordination: when dragging starts, instantly commit zoom and dismiss hover card
-    map.on('dragstart', () => {
-      hideHoverPlateRef.current?.();
-      if (isWheeling) {
-        onWheelEnd();
-      }
-    });
+      map.addLayer({
+        id: 'ocean-watermarks',
+        type: 'symbol',
+        source: 'ocean-watermarks',
+        maxzoom: 2.5,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 11,
+          'text-letter-spacing': 0.3,
+          'text-justify': 'center',
+          'text-allow-overlap': true
+        },
+        paint: {
+          'text-color': 'rgba(56, 189, 248, 0.5)',
+          'text-halo-color': 'rgba(2, 6, 23, 0.7)',
+          'text-halo-width': 1.2
+        }
+      });
 
-    map.on('zoomstart', () => {
-      hideHoverPlateRef.current?.();
-    });
+      // 5. Country Labels (Zoom 2.5 ~ 4.5)
+      map.addSource('country-labels', {
+        type: 'geojson',
+        data: labelsToGeoJSON(countryLabels, currentEpochRef.current?.platesData)
+      });
 
-    const handleContainerMouseLeave = () => {
-      hideHoverPlateRef.current?.();
-    };
-    container.addEventListener('mouseleave', handleContainerMouseLeave);
+      map.addLayer({
+        id: 'country-labels',
+        type: 'symbol',
+        source: 'country-labels',
+        minzoom: 2.5,
+        maxzoom: 4.5,
+        filter: ['>=', ['get', 'area'], 8],
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-font': ['Noto Sans Bold'],
+          'text-size': [
+            'interpolate', ['linear'], ['zoom'],
+            2.5, 11,
+            4.0, 13.5
+          ],
+          'text-variable-anchor': ['center', 'top', 'bottom'],
+          'text-justify': 'center',
+          'text-padding': 4,
+          'text-allow-overlap': false
+        },
+        paint: {
+          'text-color': '#0f172a',
+          'text-halo-color': 'rgba(255, 255, 255, 0.95)',
+          'text-halo-width': 2.5
+        }
+      });
 
-    // Track zoom level: freeze LOD switching during continuous wheeling to maintain pure 60fps
-    map.on('zoom', () => {
-      if (isWheeling) return; // Freeze mid-animation switches!
+      // 6. Province Labels (Zoom 4.5 ~ 14)
+      map.addSource('province-labels', {
+        type: 'geojson',
+        data: labelsToGeoJSON(provinceLabels, currentEpochRef.current?.platesData)
+      });
 
-      const z = map.getZoom();
+      map.addLayer({
+        id: 'province-labels',
+        type: 'symbol',
+        source: 'province-labels',
+        minzoom: 4.5,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-font': ['Noto Sans Bold'],
+          'text-size': [
+            'interpolate', ['linear'], ['zoom'],
+            4.5, 10.5,
+            7.0, 13.5,
+            10.0, 16
+          ],
+          'text-variable-anchor': ['center', 'top', 'bottom'],
+          'text-justify': 'center',
+          'text-padding': 3,
+          'text-allow-overlap': false
+        },
+        paint: {
+          'text-color': '#0f172a',
+          'text-halo-color': 'rgba(255, 255, 255, 0.95)',
+          'text-halo-width': 2.5
+        }
+      });
 
-      const oldLOD = lastReportedZoom < 2.5 ? 1 : (lastReportedZoom < 4.5 ? 2 : 3);
-      const newLOD = z < 2.5 ? 1 : (z < 4.5 ? 2 : 3);
+      // -------------------------------------------------------------------------
+      // Interactive Layer Hover & Click Handlers
+      // -------------------------------------------------------------------------
+      const interactiveLayers = ['continents-fill', 'countries-fill', 'provinces-fill'];
 
-      if (oldLOD !== newLOD) {
-        lastReportedZoom = z;
-        setZoomLevel(z);
-      } else {
-        if (!zoomRaf) {
-          zoomRaf = requestAnimationFrame(() => {
-            lastReportedZoom = map.getZoom();
-            setZoomLevel(lastReportedZoom);
-            zoomRaf = null;
+      interactiveLayers.forEach((layerId) => {
+        map.on('mousemove', layerId, (e) => {
+          if (isAddingLocationRef.current) return;
+          if (!e.features || !e.features.length) return;
+
+          const feat = e.features[0];
+          const props = feat.properties || {};
+          const id = props.id || props.name;
+          const type =
+            layerId === 'continents-fill'
+              ? '大洲板块'
+              : layerId === 'countries-fill'
+              ? '国家板块'
+              : '省州板块';
+
+          const hoverLayer = layerId.replace('-fill', '-hover');
+          if (map.getLayer(hoverLayer)) {
+            map.setFilter(hoverLayer, ['==', ['get', 'id'], id]);
+          }
+          map.getCanvas().style.cursor = 'pointer';
+
+          const epochColors = currentEpochRef.current?.regionColors || {};
+          const epochPlates = currentEpochRef.current?.platesData || {};
+          const plateData = epochPlates[id] || epochPlates[props.name] || {};
+          const displayName = plateData.name || props.name;
+          const displayColor = plateData.color || epochColors[id] || '';
+          const description = plateData.description || '';
+          const parentName = props.country || props.admin || props.continent || '';
+
+          showHoverPlate(
+            {
+              id,
+              name: displayName,
+              originalName: props.name,
+              nameEn: props.name_en || '',
+              type,
+              parentName,
+              color: displayColor,
+              description
+            },
+            e.originalEvent.clientX,
+            e.originalEvent.clientY
+          );
+        });
+
+        map.on('mouseleave', layerId, () => {
+          const hoverLayer = layerId.replace('-fill', '-hover');
+          if (map.getLayer(hoverLayer)) {
+            map.setFilter(hoverLayer, ['==', ['get', 'id'], '']);
+          }
+          map.getCanvas().style.cursor = isAddingLocationRef.current ? 'crosshair' : '';
+          hideHoverPlateRef.current?.();
+        });
+
+        map.on('click', layerId, (e) => {
+          if (isAddingLocationRef.current) return;
+          if (!e.features || !e.features.length) return;
+
+          const feat = e.features[0];
+          const props = feat.properties || {};
+          const id = props.id || props.name;
+          const type =
+            layerId === 'continents-fill'
+              ? '大洲板块'
+              : layerId === 'countries-fill'
+              ? '国家板块'
+              : '省州板块';
+
+          hideHoverPlateRef.current?.();
+
+          const epochColors = currentEpochRef.current?.regionColors || {};
+          const epochPlates = currentEpochRef.current?.platesData || {};
+          const plateData = epochPlates[id] || epochPlates[props.name] || {};
+          const displayName = plateData.name || props.name;
+          const displayColor = plateData.color || epochColors[id] || '';
+          const description = plateData.description || '';
+          const parentName = props.country || props.admin || props.continent || '';
+
+          setEditingPlateTarget({
+            id,
+            name: displayName,
+            originalName: props.name,
+            nameEn: props.name_en || '',
+            type,
+            parentName,
+            color: displayColor,
+            description
           });
-        }
-      }
+        });
+      });
     });
 
-    // Click handler for map canvas (normalizes longitude into [-180, 180])
+    // Map-level click (for pin creation or deselection)
     map.on('click', (e) => {
       hideHoverPlateRef.current?.();
-      if (isAddingLocation) {
-        let { lat, lng } = e.latlng;
-        // Normalize longitude into canonical [-180, 180]
+
+      if (isAddingLocationRef.current) {
+        let { lng, lat } = e.lngLat;
         const normalizedLng = (((lng + 180) % 360 + 360) % 360) - 180;
         setEditingLocation({
           name: '',
@@ -1117,605 +990,146 @@ export default function MapView({ isActive = true }) {
         setIsAddingLocation(false);
       } else {
         setSelectedMapLocationId(null);
-        setEditingPlateTarget(null);
+      }
+    });
+
+    // Zoom level update (throttled via RAF)
+    map.on('zoom', () => {
+      if (!zoomRafRef.current) {
+        zoomRafRef.current = requestAnimationFrame(() => {
+          setZoomLevel(map.getZoom());
+          zoomRafRef.current = null;
+        });
       }
     });
 
     mapInstanceRef.current = map;
 
     return () => {
-      if (zoomAnimationId) cancelAnimationFrame(zoomAnimationId);
-      if (zoomRaf) cancelAnimationFrame(zoomRaf);
-      clearTimeout(wheelEndTimer);
-      container.removeEventListener('wheel', handleWheel);
-      container.removeEventListener('mouseleave', handleContainerMouseLeave);
-      if (canvasLabelsLayerRef.current) {
-        map.removeLayer(canvasLabelsLayerRef.current);
-        canvasLabelsLayerRef.current = null;
-      }
+      if (zoomRafRef.current) cancelAnimationFrame(zoomRafRef.current);
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
       map.remove();
       mapInstanceRef.current = null;
+      isMapLoadedRef.current = false;
     };
   }, []);
 
-  // Dynamic Level Determination (左闭右开区间):
-  // 1级 大洲大洋: [1.0, 2.5)
-  // 2级 国家主权: [2.5, 4.5)
-  // 3级 省州大区: [4.5, +∞)
-  const currentLOD = useMemo(() => {
-    if (zoomLevel < 2.5) return 1;
-    if (zoomLevel < 4.5) return 2;
-    return 3;
-  }, [zoomLevel]);
-
-  // ---------------------------------------------------------------------------
-  // Layer 1A: Continents Vector Layer (Persistent: Instantiated ONCE)
-  // ---------------------------------------------------------------------------
+  // Update GeoJSON sources when in-memory preloading resolves
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !continentsGeo || continentsVectorLayerRef.current) return;
+    if (!map || !isMapLoadedRef.current) return;
 
-    const contLayer = L.geoJSON(continentsGeo, {
-      renderer: canvasRendererRef.current,
-      style: (feature) => {
-        const epochColors = currentEpochRef.current?.regionColors || {};
-        const epochPlates = currentEpochRef.current?.platesData || {};
-        const id = feature.properties?.id || feature.properties?.name;
-        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
-        const customColor = plateData.color || epochColors[id] || epochColors[feature.properties?.name_en];
-
-        return {
-          noClip: true,
-          fillColor: customColor || '#38bdf8',
-          fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.65)',
-          weight: 2.5,
-          lineJoin: 'round'
-        };
-      },
-      onEachFeature: (feature, layer) => {
-        const name = feature.properties?.name || '大洲';
-        const nameEn = feature.properties?.name_en || '';
-        const id = feature.properties?.id || name;
-
-        layer.on('mouseover', (e) => {
-          const l = e.target;
-          l.setStyle({
-            color: '#ffffff',
-            weight: 3.5,
-            fillOpacity: 1.0
-          });
-          l.bringToFront();
-          const orig = e.originalEvent;
-          const epochColors = currentEpochRef.current?.regionColors || {};
-          const epochPlates = currentEpochRef.current?.platesData || {};
-          const plateData = epochPlates[id] || epochPlates[name] || {};
-          const displayName = plateData.name || name;
-          const displayColor = plateData.color || epochColors[id] || '';
-          const description = plateData.description || '';
-
-          showHoverPlate({
-            id,
-            name: displayName,
-            originalName: name,
-            nameEn,
-            type: '大洲板块',
-            parentName: '',
-            color: displayColor,
-            description
-          }, orig.clientX, orig.clientY);
-        });
-
-        layer.on('mousemove', (e) => {
-          const orig = e.originalEvent;
-          updateHoverCardPos(orig.clientX, orig.clientY);
-        });
-
-        layer.on('mouseout', (e) => {
-          contLayer.resetStyle(e.target);
-          hideHoverPlate();
-        });
-
-        layer.on('click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          hideHoverPlate();
-          const epochColors = currentEpochRef.current?.regionColors || {};
-          const epochPlates = currentEpochRef.current?.platesData || {};
-          const plateData = epochPlates[id] || epochPlates[name] || {};
-          const displayName = plateData.name || name;
-          const displayColor = plateData.color || epochColors[id] || '';
-          const description = plateData.description || '';
-
-          setEditingPlateTarget({
-            id,
-            name: displayName,
-            originalName: name,
-            nameEn,
-            type: '大洲板块',
-            parentName: '',
-            color: displayColor,
-            description
-          });
-        });
-      }
-    });
-
-    continentsVectorLayerRef.current = contLayer;
-    if (currentLOD === 1 && !map.hasLayer(contLayer)) {
-      map.addLayer(contLayer);
+    if (continentsGeo && map.getSource('continents')) {
+      map.getSource('continents').setData(continentsGeo);
     }
-  }, [continentsGeo, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
+    if (countriesGeo && map.getSource('countries')) {
+      map.getSource('countries').setData(countriesGeo);
+    }
+    if (provincesGeo && map.getSource('provinces')) {
+      map.getSource('provinces').setData(provincesGeo);
+    }
+    if (continentsData && map.getSource('continent-watermarks')) {
+      map.getSource('continent-watermarks').setData(continentsWatermarksToGeoJSON(continentsData));
+    }
+    if (continentsData && map.getSource('ocean-watermarks')) {
+      map.getSource('ocean-watermarks').setData(oceanWatermarksToGeoJSON(continentsData));
+    }
+    if (countryLabels && map.getSource('country-labels')) {
+      map.getSource('country-labels').setData(labelsToGeoJSON(countryLabels, currentEpoch?.platesData));
+    }
+    if (provinceLabels && map.getSource('province-labels')) {
+      map.getSource('province-labels').setData(labelsToGeoJSON(provinceLabels, currentEpoch?.platesData));
+    }
+  }, [continentsGeo, countriesGeo, provincesGeo, continentsData, countryLabels, provinceLabels]);
 
-  // ---------------------------------------------------------------------------
-  // Layer 1B: Continent & Ocean Watermarks (Persistent: Instantiated ONCE)
-  // ---------------------------------------------------------------------------
+  // Update plate colors & label text when epoch changes
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !continentsData || continentsWatermarksLayerRef.current) return;
+    if (!map || !isMapLoadedRef.current) return;
 
-    const layerGroup = L.layerGroup();
+    const colorExpr = getPlateColorExpression(currentEpoch?.platesData, '#38bdf8');
+    if (map.getLayer('continents-fill')) map.setPaintProperty('continents-fill', 'fill-color', colorExpr);
+    if (map.getLayer('countries-fill')) map.setPaintProperty('countries-fill', 'fill-color', colorExpr);
+    if (map.getLayer('provinces-fill')) map.setPaintProperty('provinces-fill', 'fill-color', colorExpr);
 
-    WRAP_OFFSETS.forEach((offset) => {
-      continentsData.continents?.forEach((cont) => {
-        const html = `
-          <div class="pointer-events-none select-none text-center transition-all duration-300">
-            <div class="text-[12px] md:text-[13px] font-black tracking-[0.25em] text-slate-900/90 font-sans uppercase drop-shadow-[0_1px_2px_rgba(255,255,255,0.4)]">
-              ${cont.name}
-            </div>
-            <div class="text-[9px] tracking-[0.4em] text-slate-800/75 font-mono font-bold">
-              ${cont.name_en}
-            </div>
-          </div>
-        `;
-        const icon = L.divIcon({
-          className: 'continent-label',
-          html,
-          iconSize: [140, 40],
-          iconAnchor: [70, 20]
-        });
-        L.marker([cont.lat, cont.lng + offset], { icon, interactive: false }).addTo(layerGroup);
-      });
-
-      continentsData.oceans?.forEach((ocean) => {
-        const html = `
-          <div class="pointer-events-none select-none text-center opacity-60">
-            <div class="text-[12px] font-medium tracking-[0.4em] text-sky-300/60 uppercase font-serif italic">
-              ~ ${ocean.name} ~
-            </div>
-            <div class="text-[9px] tracking-[0.3em] text-sky-400/40 uppercase font-mono">
-              ${ocean.name_en || ''}
-            </div>
-          </div>
-        `;
-        const icon = L.divIcon({
-          className: 'ocean-label',
-          html,
-          iconSize: [160, 30],
-          iconAnchor: [80, 15]
-        });
-        L.marker([ocean.lat, ocean.lng + offset], { icon, interactive: false }).addTo(layerGroup);
-      });
-    });
-
-    continentsWatermarksLayerRef.current = layerGroup;
-    if (currentLOD === 1 && !map.hasLayer(layerGroup)) {
-      map.addLayer(layerGroup);
+    if (map.getSource('country-labels') && countryLabels) {
+      map.getSource('country-labels').setData(labelsToGeoJSON(countryLabels, currentEpoch?.platesData));
     }
-  }, [continentsData, currentLOD]);
-
-  // ---------------------------------------------------------------------------
-  // Layer 2: Countries Vector Layer (Persistent: Instantiated ONCE)
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map || !countriesGeo || countriesLayerRef.current) return;
-
-    const geoLayer = L.geoJSON(countriesGeo, {
-      renderer: canvasRendererRef.current,
-      style: (feature) => {
-        const epochColors = currentEpochRef.current?.regionColors || {};
-        const epochPlates = currentEpochRef.current?.platesData || {};
-        const id = feature.properties?.id || feature.properties?.name;
-        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
-        const customColor = plateData.color || epochColors[id] || epochColors[feature.properties?.name_en];
-
-        return {
-          noClip: true,
-          fillColor: customColor || '#38bdf8',
-          fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.75)',
-          weight: 2.0,
-          lineJoin: 'round'
-        };
-      },
-      onEachFeature: (feature, layer) => {
-        const name = feature.properties?.name || feature.properties?.name_en || '国家/地区';
-        const nameEn = feature.properties?.name_en || '';
-        const id = feature.properties?.id || name;
-        const parentName = feature.properties?.continent || '';
-
-        layer.on('mouseover', (e) => {
-          const l = e.target;
-          l.setStyle({
-            color: '#ffffff',
-            weight: 3.2,
-            fillOpacity: 1.0
-          });
-          l.bringToFront();
-          const orig = e.originalEvent;
-          const epochColors = currentEpochRef.current?.regionColors || {};
-          const epochPlates = currentEpochRef.current?.platesData || {};
-          const plateData = epochPlates[id] || epochPlates[name] || {};
-          const displayName = plateData.name || name;
-          const displayColor = plateData.color || epochColors[id] || '';
-          const description = plateData.description || '';
-
-          showHoverPlate({
-            id,
-            name: displayName,
-            originalName: name,
-            nameEn,
-            type: '国家板块',
-            parentName,
-            color: displayColor,
-            description
-          }, orig.clientX, orig.clientY);
-        });
-
-        layer.on('mousemove', (e) => {
-          const orig = e.originalEvent;
-          updateHoverCardPos(orig.clientX, orig.clientY);
-        });
-
-        layer.on('mouseout', (e) => {
-          geoLayer.resetStyle(e.target);
-          hideHoverPlate();
-        });
-
-        layer.on('click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          hideHoverPlate();
-          const epochColors = currentEpochRef.current?.regionColors || {};
-          const epochPlates = currentEpochRef.current?.platesData || {};
-          const plateData = epochPlates[id] || epochPlates[name] || {};
-          const displayName = plateData.name || name;
-          const displayColor = plateData.color || epochColors[id] || '';
-          const description = plateData.description || '';
-
-          setEditingPlateTarget({
-            id,
-            name: displayName,
-            originalName: name,
-            nameEn,
-            type: '国家板块',
-            parentName,
-            color: displayColor,
-            description
-          });
-        });
-      }
-    });
-
-    countriesLayerRef.current = geoLayer;
-    if (currentLOD === 2 && !map.hasLayer(geoLayer)) {
-      map.addLayer(geoLayer);
+    if (map.getSource('province-labels') && provinceLabels) {
+      map.getSource('province-labels').setData(labelsToGeoJSON(provinceLabels, currentEpoch?.platesData));
     }
-  }, [countriesGeo, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
+  }, [currentEpoch, countryLabels, provinceLabels]);
 
-  // ---------------------------------------------------------------------------
-  // Layer 3: Worldwide Provinces & States Vector Layer (Persistent: Instantiated ONCE)
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map || !provincesGeo || provincesLayerRef.current) return;
-
-    const provLayer = L.geoJSON(provincesGeo, {
-      renderer: canvasRendererRef.current,
-      style: (feature) => {
-        const epochColors = currentEpochRef.current?.regionColors || {};
-        const epochPlates = currentEpochRef.current?.platesData || {};
-        const id = feature.properties?.id || feature.properties?.name;
-        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
-        const customColor = plateData.color || epochColors[id];
-
-        return {
-          fillColor: customColor || '#38bdf8',
-          fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.5)',
-          weight: 1.5,
-          lineJoin: 'round'
-        };
-      },
-      onEachFeature: (feature, layer) => {
-        const name = feature.properties?.name || feature.properties?.name_en || '行政省州';
-        const nameEn = feature.properties?.name_en || '';
-        const id = feature.properties?.id || name;
-        const parentName = feature.properties?.country || feature.properties?.admin || '所属国家';
-
-        layer.on('mouseover', (e) => {
-          const l = e.target;
-          l.setStyle({
-            color: '#ffffff',
-            weight: 2.5,
-            fillOpacity: 1.0
-          });
-          l.bringToFront();
-          const orig = e.originalEvent;
-          const epochColors = currentEpochRef.current?.regionColors || {};
-          const epochPlates = currentEpochRef.current?.platesData || {};
-          const plateData = epochPlates[id] || epochPlates[name] || {};
-          const displayName = plateData.name || name;
-          const displayColor = plateData.color || epochColors[id] || '';
-          const description = plateData.description || '';
-
-          showHoverPlate({
-            id,
-            name: displayName,
-            originalName: name,
-            nameEn,
-            type: '省州板块',
-            parentName,
-            color: displayColor,
-            description
-          }, orig.clientX, orig.clientY);
-        });
-
-        layer.on('mousemove', (e) => {
-          const orig = e.originalEvent;
-          updateHoverCardPos(orig.clientX, orig.clientY);
-        });
-
-        layer.on('mouseout', (e) => {
-          provLayer.resetStyle(e.target);
-          hideHoverPlate();
-        });
-
-        layer.on('click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          hideHoverPlate();
-          const epochColors = currentEpochRef.current?.regionColors || {};
-          const epochPlates = currentEpochRef.current?.platesData || {};
-          const plateData = epochPlates[id] || epochPlates[name] || {};
-          const displayName = plateData.name || name;
-          const displayColor = plateData.color || epochColors[id] || '';
-          const description = plateData.description || '';
-
-          setEditingPlateTarget({
-            id,
-            name: displayName,
-            originalName: name,
-            nameEn,
-            type: '省州板块',
-            parentName,
-            color: displayColor,
-            description
-          });
-        });
-      }
-    });
-
-    provincesLayerRef.current = provLayer;
-    if (currentLOD === 3 && !map.hasLayer(provLayer)) {
-      map.addLayer(provLayer);
-    }
-  }, [provincesGeo, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
-
-  // ---------------------------------------------------------------------------
-  // Fast Style Updater on Epoch or Plate Color Edit (0 layer recreation!)
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    const epochColors = currentEpoch?.regionColors || {};
-    const epochPlates = currentEpoch?.platesData || {};
-
-    if (continentsVectorLayerRef.current) {
-      continentsVectorLayerRef.current.setStyle((feature) => {
-        const id = feature.properties?.id || feature.properties?.name;
-        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
-        const customColor = plateData.color || epochColors[id] || epochColors[feature.properties?.name_en];
-        return {
-          noClip: true,
-          fillColor: customColor || '#38bdf8',
-          fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.65)',
-          weight: 2.5,
-          lineJoin: 'round'
-        };
-      });
-    }
-
-    if (countriesLayerRef.current) {
-      countriesLayerRef.current.setStyle((feature) => {
-        const id = feature.properties?.id || feature.properties?.name;
-        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
-        const customColor = plateData.color || epochColors[id] || epochColors[feature.properties?.name_en];
-        return {
-          noClip: true,
-          fillColor: customColor || '#38bdf8',
-          fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.75)',
-          weight: 2.0,
-          lineJoin: 'round'
-        };
-      });
-    }
-
-    if (provincesLayerRef.current) {
-      provincesLayerRef.current.setStyle((feature) => {
-        const id = feature.properties?.id || feature.properties?.name;
-        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
-        const customColor = plateData.color || epochColors[id];
-        return {
-          fillColor: customColor || '#38bdf8',
-          fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.5)',
-          weight: 1.5,
-          lineJoin: 'round'
-        };
-      });
-    }
-  }, [currentEpoch]);
-
-  // ---------------------------------------------------------------------------
-  // Fast Instant LOD Switcher: Add / Remove already-instantiated layers in 1ms (0 recreation!)
-  // ---------------------------------------------------------------------------
+  // Sync interactive location markers
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    hideHoverPlate();
+    markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
 
-    const contLayer = continentsVectorLayerRef.current;
-    const watermarksLayer = continentsWatermarksLayerRef.current;
-    const countLayer = countriesLayerRef.current;
-    const provLayer = provincesLayerRef.current;
+    filteredLocations.forEach((loc) => {
+      const isSelected = selectedMapLocationId === loc.id;
+      const pinColor = loc.color || '#38bdf8';
+      const eventCount = filteredEvents.filter((t) => t.locationId === loc.id).length;
 
-    if (currentLOD === 1) {
-      if (provLayer && map.hasLayer(provLayer)) map.removeLayer(provLayer);
-      if (countLayer && map.hasLayer(countLayer)) map.removeLayer(countLayer);
-      if (contLayer && !map.hasLayer(contLayer)) map.addLayer(contLayer);
-      if (watermarksLayer && !map.hasLayer(watermarksLayer)) map.addLayer(watermarksLayer);
-    } else if (currentLOD === 2) {
-      if (provLayer && map.hasLayer(provLayer)) map.removeLayer(provLayer);
-      if (contLayer && map.hasLayer(contLayer)) map.removeLayer(contLayer);
-      if (watermarksLayer && map.hasLayer(watermarksLayer)) map.removeLayer(watermarksLayer);
-      if (countLayer && !map.hasLayer(countLayer)) map.addLayer(countLayer);
-    } else if (currentLOD === 3) {
-      if (contLayer && map.hasLayer(contLayer)) map.removeLayer(contLayer);
-      if (watermarksLayer && map.hasLayer(watermarksLayer)) map.removeLayer(watermarksLayer);
-      if (countLayer && map.hasLayer(countLayer)) map.removeLayer(countLayer);
-      if (provLayer && !map.hasLayer(provLayer)) map.addLayer(provLayer);
-    }
+      const el = document.createElement('div');
+      el.className = 'relative group cursor-pointer -translate-x-1/2 -translate-y-1/2';
+      el.innerHTML = `
+        <div class="absolute -inset-2 rounded-full opacity-40 ${
+          isSelected ? 'animate-ping' : 'group-hover:animate-ping'
+        }" style="background-color: ${pinColor};"></div>
 
-    if (canvasLabelsLayerRef.current) {
-      canvasLabelsLayerRef.current._update();
-    }
-    if (canvasRendererRef.current) {
-      canvasRendererRef.current._update();
-    }
-  }, [currentLOD, continentsGeo, countriesGeo, provincesGeo, continentsData, hideHoverPlate]);
+        <div class="relative w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-all shadow-xl ${
+          isSelected ? 'border-white scale-110' : 'border-slate-800'
+        }" style="background-color: ${isSelected ? pinColor : '#0f172a'}; color: ${
+        isSelected ? '#ffffff' : pinColor
+      }; box-shadow: 0 0 15px ${pinColor}88;">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          ${
+            eventCount > 0
+              ? `<span class="absolute -top-1.5 -right-1.5 px-1 min-w-4 h-4 text-[9px] font-bold rounded-full bg-amber-500 text-slate-950 flex items-center justify-center border border-slate-900">${eventCount}</span>`
+              : ''
+          }
+        </div>
 
-  // ---------------------------------------------------------------------------
-  // GPU Canvas Labels Data Synchronization
-  // Zero DOM markers: all country & province labels rendered on GPU Canvas
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (canvasLabelsLayerRef.current) {
-      canvasLabelsLayerRef.current.updateData({
-        countryLabels,
-        provinceLabels,
-        platesData: currentEpoch?.platesData || {}
+        <div class="mt-1 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border backdrop-blur flex items-center gap-1 shadow-lg ${
+          isSelected
+            ? 'bg-slate-900/95 border-white text-white'
+            : 'bg-slate-900/80 border-slate-700/80 text-slate-200'
+        }">
+          <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${pinColor};"></span>
+          <span>${loc.name}</span>
+        </div>
+      `;
+
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setSelectedMapLocationId(isSelected ? null : loc.id);
+        setEditingPlateTarget(null);
       });
-    }
-  }, [countryLabels, provinceLabels, currentEpoch?.platesData]);
 
-  useEffect(() => {
-    hideHoverPlate();
-    if (canvasLabelsLayerRef.current) {
-      canvasLabelsLayerRef.current._update();
-    }
-    if (canvasRendererRef.current) {
-      canvasRendererRef.current._update();
-    }
-  }, [currentLOD, hideHoverPlate]);
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([loc.lng, loc.lat])
+        .addTo(map);
 
-  // Update Interactive Location Markers on Map (Wrapped across all world copies)
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-
-    if (markersLayerRef.current) {
-      map.removeLayer(markersLayerRef.current);
-      markersLayerRef.current = null;
-    }
-
-    const markersGroup = L.layerGroup();
-
-    WRAP_OFFSETS.forEach((offset) => {
-      filteredLocations.forEach((loc) => {
-        const isSelected = selectedMapLocationId === loc.id;
-        const pinColor = loc.color || '#38bdf8';
-        const eventCount = filteredEvents.filter((t) => t.locationId === loc.id).length;
-
-        const html = `
-          <div class="relative group cursor-pointer -translate-x-1/2 -translate-y-1/2">
-            <!-- Radar Pulse Wave -->
-            <div class="absolute -inset-2 rounded-full opacity-40 ${
-              isSelected ? 'animate-ping' : 'group-hover:animate-ping'
-            }" style="background-color: ${pinColor};"></div>
-
-            <!-- Pin Head -->
-            <div class="relative w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-all shadow-xl ${
-              isSelected ? 'border-white scale-110' : 'border-slate-800'
-            }" style="background-color: ${isSelected ? pinColor : '#0f172a'}; color: ${
-          isSelected ? '#ffffff' : pinColor
-        }; box-shadow: 0 0 15px ${pinColor}88;">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-              </svg>
-              ${
-                eventCount > 0
-                  ? `<span class="absolute -top-1.5 -right-1.5 px-1 min-w-4 h-4 text-[9px] font-bold rounded-full bg-amber-500 text-slate-950 flex items-center justify-center border border-slate-900">${eventCount}</span>`
-                  : ''
-              }
-            </div>
-
-            <!-- Label Pill -->
-            <div class="mt-1 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border backdrop-blur flex items-center gap-1 shadow-lg ${
-              isSelected
-                ? 'bg-slate-900/95 border-white text-white'
-                : 'bg-slate-900/80 border-slate-700/80 text-slate-200'
-            }">
-              <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${pinColor};"></span>
-              <span>${loc.name}</span>
-            </div>
-          </div>
-        `;
-
-        const customIcon = L.divIcon({
-          className: 'novel-poi-pin',
-          html,
-          iconSize: [32, 32],
-          iconAnchor: [16, 16]
-        });
-
-        const marker = L.marker([loc.lat, loc.lng + offset], { icon: customIcon });
-        marker.on('click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          setSelectedMapLocationId(isSelected ? null : loc.id);
-          setEditingPlateTarget(null);
-        });
-
-        marker.addTo(markersGroup);
-      });
+      markersRef.current.push(marker);
     });
-
-    markersGroup.addTo(map);
-    markersLayerRef.current = markersGroup;
   }, [filteredLocations, selectedMapLocationId, filteredEvents]);
 
-  // Fly to location when selected (chooses the nearest wrapped copy)
   const flyToLocation = useCallback((lat, lng, zoom = 6) => {
     const map = mapInstanceRef.current;
     if (!map) return;
-
-    const currentCenterLng = map.getCenter().lng;
-    let bestLng = lng;
-    let minDiff = Math.abs(lng - currentCenterLng);
-    WRAP_OFFSETS.forEach((off) => {
-      const diff = Math.abs(lng + off - currentCenterLng);
-      if (diff < minDiff) {
-        minDiff = diff;
-        bestLng = lng + off;
-      }
-    });
-
-    map.flyTo([lat, bestLng], zoom, {
-      animate: true,
-      duration: 1.2
+    map.flyTo({
+      center: [lng, lat],
+      zoom,
+      speed: 1.2
     });
   }, []);
 
-  // Save location modal
   const handleSaveLocation = async (e) => {
     e.preventDefault();
     if (!editingLocation.name.trim()) {
@@ -1730,7 +1144,6 @@ export default function MapView({ isActive = true }) {
     setEditingLocation(null);
   };
 
-  // Save timeline event modal
   const handleSaveTimelineEvent = async (e) => {
     e.preventDefault();
     if (!editingEvent.title.trim()) {
@@ -1745,7 +1158,6 @@ export default function MapView({ isActive = true }) {
     setEditingEvent(null);
   };
 
-  // Plate editing handler (板块信息与颜色保存)
   const handleSavePlate = async ({ plateId, name, color, description, applyAllEpochs }) => {
     if (!editingPlateTarget) return;
     await setPlateInfo(currentEpochId, plateId, {
@@ -1775,11 +1187,11 @@ export default function MapView({ isActive = true }) {
           </div>
         </div>
 
-        {/* Center: 3-Level Hierarchical LOD Indicator & Quick Jump */}
+        {/* Center: 3-Level Hierarchical LOD Quick Jump */}
         <div className="flex items-center gap-2 bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs">
           <span className="text-[10px] font-mono text-slate-400 px-1.5">缩放层级:</span>
           <button
-            onClick={() => mapInstanceRef.current?.setZoom(1.8)}
+            onClick={() => mapInstanceRef.current?.easeTo({ zoom: 1.8, duration: 600 })}
             className={`px-2.5 py-1 rounded-lg transition-all font-medium flex items-center gap-1 ${
               currentLOD === 1
                 ? 'bg-sky-600 text-white shadow-sm font-bold'
@@ -1790,7 +1202,7 @@ export default function MapView({ isActive = true }) {
             <span>1级 大洲板块 [1.0~2.5)</span>
           </button>
           <button
-            onClick={() => mapInstanceRef.current?.setZoom(3.2)}
+            onClick={() => mapInstanceRef.current?.easeTo({ zoom: 3.2, duration: 600 })}
             className={`px-2.5 py-1 rounded-lg transition-all font-medium flex items-center gap-1 ${
               currentLOD === 2
                 ? 'bg-sky-600 text-white shadow-sm font-bold'
@@ -1801,7 +1213,7 @@ export default function MapView({ isActive = true }) {
             <span>2级 国家板块 [2.5~4.5)</span>
           </button>
           <button
-            onClick={() => mapInstanceRef.current?.setZoom(5.5)}
+            onClick={() => mapInstanceRef.current?.easeTo({ zoom: 5.5, duration: 600 })}
             className={`px-2.5 py-1 rounded-lg transition-all font-medium flex items-center gap-1 ${
               currentLOD === 3
                 ? 'bg-sky-600 text-white shadow-sm font-bold'
@@ -1818,7 +1230,6 @@ export default function MapView({ isActive = true }) {
 
         {/* Right Tools: Add Pin, Add Event, Toggle Timeline, Return */}
         <div className="flex items-center gap-2">
-          {/* Add Pin Button */}
           <button
             onClick={() => {
               setIsAddingLocation(!isAddingLocation);
@@ -1835,7 +1246,6 @@ export default function MapView({ isActive = true }) {
             <span>{isAddingLocation ? '点击地图任意处插旗...' : '新增标注点'}</span>
           </button>
 
-          {/* Toggle Timeline Bar */}
           <button
             onClick={() => setIsTimelineOpen(!isTimelineOpen)}
             className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
@@ -1856,7 +1266,6 @@ export default function MapView({ isActive = true }) {
 
           <div className="h-4 w-px bg-slate-800 mx-1" />
 
-          {/* Switch to Nodes workspace */}
           <button
             onClick={() => setActiveWorkspace('nodes')}
             className="flex items-center gap-1 text-xs text-slate-300 hover:text-white px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-700 transition-colors"
@@ -1866,7 +1275,7 @@ export default function MapView({ isActive = true }) {
         </div>
       </header>
 
-      {/* Floating Map Historical Epoch Switcher (地图时空变迁控制条) */}
+      {/* Floating Map Historical Epoch Switcher */}
       <div className="absolute top-16 left-6 z-20 flex items-center gap-1 bg-slate-900/90 backdrop-blur-md p-1 rounded-xl border border-slate-800 shadow-xl">
         <span className="text-[10px] font-bold text-slate-400 px-2 flex items-center gap-1 uppercase tracking-wider">
           <History className="w-3.5 h-3.5 text-amber-400" />
@@ -1913,9 +1322,8 @@ export default function MapView({ isActive = true }) {
         </div>
       )}
 
-      {/* Main Map Body: Leaflet Canvas + Inspector Drawer */}
+      {/* Main Map Body: MapLibre GL Canvas + Inspector Drawer */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Leaflet DOM container (Dark Blue Ocean Vector Canvas) */}
         <div
           ref={mapContainerRef}
           className={`flex-1 w-full h-full ${
@@ -1927,7 +1335,7 @@ export default function MapView({ isActive = true }) {
           }}
         />
 
-        {/* Selected Location Inspector Drawer (Right Side) */}
+        {/* Selected Location Inspector Drawer */}
         {selectedLocation && (
           <aside className="w-80 border-l border-slate-800 bg-slate-900/95 backdrop-blur-md flex flex-col shrink-0 z-30 shadow-2xl animate-fadeIn">
             <div className="p-4 border-b border-slate-800 flex items-center justify-between">
@@ -1980,7 +1388,6 @@ export default function MapView({ isActive = true }) {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-              {/* Real Latitude / Longitude coordinates */}
               <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between font-mono text-[11px] text-slate-400">
                 <span className="flex items-center gap-1 text-sky-400">
                   <Compass className="w-3.5 h-3.5" />
@@ -1991,7 +1398,6 @@ export default function MapView({ isActive = true }) {
                 </span>
               </div>
 
-              {/* Time stamp */}
               <div className="flex items-center justify-between bg-slate-950/40 p-2.5 rounded-xl border border-slate-800">
                 <span className="text-slate-400">标定时期 / 年份:</span>
                 <span className="font-mono text-amber-300 font-bold">
@@ -1999,7 +1405,6 @@ export default function MapView({ isActive = true }) {
                 </span>
               </div>
 
-              {/* Description */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-semibold text-slate-400">设定与背景简介</label>
                 <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-slate-300 text-xs leading-relaxed whitespace-pre-wrap">
@@ -2007,7 +1412,6 @@ export default function MapView({ isActive = true }) {
                 </div>
               </div>
 
-              {/* Related Timeline Events */}
               <div className="space-y-2 pt-2 border-t border-slate-800">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
@@ -2070,7 +1474,8 @@ export default function MapView({ isActive = true }) {
         )}
       </div>
 
-      {/* Plate Editor Modal (板块编辑面板：名称、颜色、简介) */}
+      <PlateHoverCard plate={hoveredPlate} cardRef={plateHoverCardRef} />
+
       {editingPlateTarget && (
         <PlateEditorModal
           target={editingPlateTarget}
@@ -2080,13 +1485,9 @@ export default function MapView({ isActive = true }) {
         />
       )}
 
-      {/* Singleton Plate Hover Card (全局单例悬停卡片，物理级杜绝多卡片残留) */}
-      <PlateHoverCard plate={hoveredPlate} cardRef={plateHoverCardRef} />
-
-      {/* Dual-Boundary Range Interactive Timeline Bar (双边界过滤时间轴) */}
+      {/* Dual-Boundary Range Interactive Timeline Bar */}
       {isTimelineOpen && (
         <div className="h-44 border-t border-slate-800 bg-slate-900/95 backdrop-blur-md flex flex-col shrink-0 z-20 shadow-2xl animate-fadeIn">
-          {/* Timeline Sub-header: Current Playhead & Range Status */}
           <div className="h-9 border-b border-slate-800/80 px-4 flex items-center justify-between text-xs text-slate-400 shrink-0">
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5 font-bold text-slate-200">
@@ -2094,7 +1495,6 @@ export default function MapView({ isActive = true }) {
                 <span>双边界时间轴</span>
               </div>
 
-              {/* Left & Right boundary tags */}
               <div className="flex items-center gap-2 font-mono text-[11px]">
                 <span className="text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
                   左边界: {timelineSettings.leftBound} 年
@@ -2129,7 +1529,6 @@ export default function MapView({ isActive = true }) {
             </div>
           </div>
 
-          {/* Dual Range Sliders & Time Scrubber Bar */}
           <div className="px-6 py-2 border-b border-slate-800/60 bg-slate-950/60 flex items-center gap-4">
             <div className="flex-1 flex flex-col gap-1">
               <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
@@ -2140,9 +1539,7 @@ export default function MapView({ isActive = true }) {
                 <span>未来 +2100年</span>
               </div>
 
-              {/* Sliders container */}
               <div className="relative w-full h-6 flex items-center">
-                {/* Visual Active Range Bar */}
                 <div className="absolute w-full h-1.5 bg-slate-800 rounded-full" />
                 <div
                   className="absolute h-1.5 bg-gradient-to-r from-sky-500 to-amber-500 rounded-full"
@@ -2154,7 +1551,6 @@ export default function MapView({ isActive = true }) {
                   }}
                 />
 
-                {/* Left Boundary Range Input */}
                 <input
                   type="range"
                   min="-1000"
@@ -2171,7 +1567,6 @@ export default function MapView({ isActive = true }) {
                   title="调节左边界"
                 />
 
-                {/* Right Boundary Range Input */}
                 <input
                   type="range"
                   min="-1000"
@@ -2191,7 +1586,6 @@ export default function MapView({ isActive = true }) {
             </div>
           </div>
 
-          {/* Filtered Events Horizontal Track */}
           <div className="flex-1 overflow-x-auto overflow-y-hidden px-4 py-2 flex items-center gap-3 scrollbar-thin">
             {filteredEvents.length === 0 ? (
               <div className="w-full text-center text-xs text-slate-400 py-3">
