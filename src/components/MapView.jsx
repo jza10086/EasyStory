@@ -1049,8 +1049,9 @@ export default function MapView({ isActive = true }) {
           noClip: true,
           fillColor: customColor || '#38bdf8', // Default bright blue (#38BDF8)
           fillOpacity: customColor ? 0.95 : 0.88,
-          color: 'rgba(255, 255, 255, 0.15)', // Continent boundary line
-          weight: 1
+          color: 'rgba(255, 255, 255, 0.65)', // Scheme 1: Prominent continent boundary line
+          weight: 2.5,
+          lineJoin: 'round'
         };
       },
       onEachFeature: (feature, layer) => {
@@ -1067,7 +1068,7 @@ export default function MapView({ isActive = true }) {
           const l = e.target;
           l.setStyle({
             color: '#ffffff',
-            weight: 2.5,
+            weight: 3.5,
             fillOpacity: 1.0
           });
           l.bringToFront();
@@ -1209,8 +1210,9 @@ export default function MapView({ isActive = true }) {
           noClip: true,
           fillColor: customColor || '#38bdf8', // Default bright blue (#38BDF8)
           fillOpacity: customColor ? 0.95 : 0.88,
-          color: 'transparent', // Transparent boundary lines
-          weight: 0
+          color: 'rgba(255, 255, 255, 0.75)', // Scheme 1: Prominent country boundary lines
+          weight: 2.0,
+          lineJoin: 'round'
         };
       },
       onEachFeature: (feature, layer) => {
@@ -1228,7 +1230,7 @@ export default function MapView({ isActive = true }) {
           const l = e.target;
           l.setStyle({
             color: '#ffffff',
-            weight: 2,
+            weight: 3.2,
             fillOpacity: 1.0
           });
           l.bringToFront();
@@ -1306,8 +1308,9 @@ export default function MapView({ isActive = true }) {
         return {
           fillColor: customColor || '#38bdf8',
           fillOpacity: customColor ? 0.95 : 0.88,
-          color: 'rgba(255, 255, 255, 0.25)', // Subtle translucent boundary line separating provinces
-          weight: 1
+          color: 'rgba(255, 255, 255, 0.5)', // Scheme 1: Crisp visible province boundary line
+          weight: 1.5,
+          lineJoin: 'round'
         };
       },
       onEachFeature: (feature, layer) => {
@@ -1324,7 +1327,7 @@ export default function MapView({ isActive = true }) {
           const l = e.target;
           l.setStyle({
             color: '#ffffff',
-            weight: 2,
+            weight: 2.5,
             fillOpacity: 1.0
           });
           l.bringToFront();
