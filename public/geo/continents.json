@@ -1,0 +1,97 @@
+{
+  "continents": [
+    {
+      "id": "asia",
+      "name": "亚洲",
+      "name_en": "ASIA",
+      "lat": 34,
+      "lng": 100,
+      "description": "东方大陆，山脉绵延，诸方古老文明策源地"
+    },
+    {
+      "id": "europe",
+      "name": "欧洲",
+      "name_en": "EUROPE",
+      "lat": 50,
+      "lng": 15,
+      "description": "西方大陆，旧帝国与邦联林立，以太工坊与学术中枢"
+    },
+    {
+      "id": "africa",
+      "name": "非洲",
+      "name_en": "AFRICA",
+      "lat": 2,
+      "lng": 20,
+      "description": "原初大陆，广袤金漠与大裂谷，远古原石矿脉深埋"
+    },
+    {
+      "id": "north-america",
+      "name": "北美洲",
+      "name_en": "NORTH AMERICA",
+      "lat": 40,
+      "lng": -100,
+      "description": "新大陆北方，工业巨构与新兴联邦自治领"
+    },
+    {
+      "id": "south-america",
+      "name": "南美洲",
+      "name_en": "SOUTH AMERICA",
+      "lat": -15,
+      "lng": -60,
+      "description": "雨林与高原腹地，失落遗迹与神殿隐匿之处"
+    },
+    {
+      "id": "oceania",
+      "name": "大洋洲",
+      "name_en": "OCEANIA",
+      "lat": -25,
+      "lng": 135,
+      "description": "南太平洋群岛与孤立大陆，商船与自由港聚集"
+    },
+    {
+      "id": "antarctica",
+      "name": "南极洲",
+      "name_en": "ANTARCTICA",
+      "lat": -80,
+      "lng": 0,
+      "description": "永冻极南之地，极地深渊科研所与古老封印"
+    }
+  ],
+  "oceans": [
+    {
+      "id": "pacific-ocean",
+      "name": "太平洋",
+      "name_en": "PACIFIC OCEAN",
+      "lat": 5,
+      "lng": -160
+    },
+    {
+      "id": "atlantic-ocean",
+      "name": "大西洋",
+      "name_en": "ATLANTIC OCEAN",
+      "lat": 10,
+      "lng": -35
+    },
+    {
+      "id": "indian-ocean",
+      "name": "印度洋",
+      "name_en": "INDIAN OCEAN",
+      "lat": -15,
+      "lng": 80
+    },
+    {
+      "id": "arctic-ocean",
+      "name": "北冰洋",
+      "name_en": "ARCTIC OCEAN",
+      "lat": 80,
+      "lng": 0
+    },
+    {
+      "id": "southern-ocean",
+      "name": "南冰洋",
+      "name_en": "SOUTHERN OCEAN",
+      "lat": -60,
+      "lng": 0
+    }
+  ]
+}
