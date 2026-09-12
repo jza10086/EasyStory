@@ -624,6 +624,11 @@ export default function MapView({ isActive = true }) {
     return epochs.find((ep) => ep.id === currentEpochId) || epochs[0] || null;
   }, [epochs, currentEpochId]);
 
+  const currentEpochRef = useRef(currentEpoch);
+  useEffect(() => {
+    currentEpochRef.current = currentEpoch;
+  }, [currentEpoch]);
+
   // UI state
   const [zoomLevel, setZoomLevel] = useState(2.2);
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
@@ -862,6 +867,12 @@ export default function MapView({ isActive = true }) {
       }
       map._moving = false;
       map._animatingZoom = false;
+
+      // Settle final zoom level and trigger target LOD switch cleanly
+      const finalZ = map.getZoom();
+      lastReportedZoom = finalZ;
+      setZoomLevel(finalZ);
+
       if (canvasRendererRef.current) {
         canvasRendererRef.current._update();
       }
@@ -880,6 +891,11 @@ export default function MapView({ isActive = true }) {
         }
         map._moving = false;
         map._animatingZoom = false;
+
+        const finalZ = map.getZoom();
+        lastReportedZoom = finalZ;
+        setZoomLevel(finalZ);
+
         if (canvasRendererRef.current) {
           canvasRendererRef.current._update();
         }
@@ -898,6 +914,11 @@ export default function MapView({ isActive = true }) {
         map._animatingZoom = false;
         isWheeling = false;
         zoomAnimationId = null;
+
+        const finalZ = map.getZoom();
+        lastReportedZoom = finalZ;
+        setZoomLevel(finalZ);
+
         if (canvasRendererRef.current) {
           canvasRendererRef.current._update();
         }
@@ -952,8 +973,10 @@ export default function MapView({ isActive = true }) {
     };
     container.addEventListener('mouseleave', handleContainerMouseLeave);
 
-    // Track zoom level: instant LOD switch when crossing 2.5 / 4.5, throttled updates for HUD
+    // Track zoom level: freeze LOD switching during continuous wheeling to maintain pure 60fps
     map.on('zoom', () => {
+      if (isWheeling) return; // Freeze mid-animation switches!
+
       const z = map.getZoom();
 
       const oldLOD = lastReportedZoom < 2.5 ? 1 : (lastReportedZoom < 4.5 ? 2 : 3);
@@ -1027,35 +1050,26 @@ export default function MapView({ isActive = true }) {
   }, [zoomLevel]);
 
   // ---------------------------------------------------------------------------
-  // Layer 1A: Continents Vector Layer (Level 1 [1.0, 2.5): Hover by Continent Block)
+  // Layer 1A: Continents Vector Layer (Persistent: Instantiated ONCE)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !continentsGeo) return;
-
-    if (continentsVectorLayerRef.current) {
-      map.removeLayer(continentsVectorLayerRef.current);
-      continentsVectorLayerRef.current = null;
-    }
-
-    // Only active in Level 1
-    if (currentLOD !== 1) return;
-
-    const epochColors = currentEpoch?.regionColors || {};
-    const epochPlates = currentEpoch?.platesData || {};
+    if (!map || !continentsGeo || continentsVectorLayerRef.current) return;
 
     const contLayer = L.geoJSON(continentsGeo, {
       renderer: canvasRendererRef.current,
       style: (feature) => {
+        const epochColors = currentEpochRef.current?.regionColors || {};
+        const epochPlates = currentEpochRef.current?.platesData || {};
         const id = feature.properties?.id || feature.properties?.name;
         const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
         const customColor = plateData.color || epochColors[id] || epochColors[feature.properties?.name_en];
 
         return {
           noClip: true,
-          fillColor: customColor || '#38bdf8', // Default bright blue (#38BDF8)
+          fillColor: customColor || '#38bdf8',
           fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.65)', // Scheme 1: Prominent continent boundary line
+          color: 'rgba(255, 255, 255, 0.65)',
           weight: 2.5,
           lineJoin: 'round'
         };
@@ -1064,12 +1078,7 @@ export default function MapView({ isActive = true }) {
         const name = feature.properties?.name || '大洲';
         const nameEn = feature.properties?.name_en || '';
         const id = feature.properties?.id || name;
-        const plateData = epochPlates[id] || epochPlates[name] || {};
-        const displayName = plateData.name || name;
-        const displayColor = plateData.color || epochColors[id] || '';
-        const description = plateData.description || '';
 
-        // Hover effect: Highlights the ENTIRE continent block
         layer.on('mouseover', (e) => {
           const l = e.target;
           l.setStyle({
@@ -1079,6 +1088,13 @@ export default function MapView({ isActive = true }) {
           });
           l.bringToFront();
           const orig = e.originalEvent;
+          const epochColors = currentEpochRef.current?.regionColors || {};
+          const epochPlates = currentEpochRef.current?.platesData || {};
+          const plateData = epochPlates[id] || epochPlates[name] || {};
+          const displayName = plateData.name || name;
+          const displayColor = plateData.color || epochColors[id] || '';
+          const description = plateData.description || '';
+
           showHoverPlate({
             id,
             name: displayName,
@@ -1104,6 +1120,13 @@ export default function MapView({ isActive = true }) {
         layer.on('click', (e) => {
           L.DomEvent.stopPropagation(e);
           hideHoverPlate();
+          const epochColors = currentEpochRef.current?.regionColors || {};
+          const epochPlates = currentEpochRef.current?.platesData || {};
+          const plateData = epochPlates[id] || epochPlates[name] || {};
+          const displayName = plateData.name || name;
+          const displayColor = plateData.color || epochColors[id] || '';
+          const description = plateData.description || '';
+
           setEditingPlateTarget({
             id,
             name: displayName,
@@ -1118,30 +1141,23 @@ export default function MapView({ isActive = true }) {
       }
     });
 
-    contLayer.addTo(map);
     continentsVectorLayerRef.current = contLayer;
-  }, [continentsGeo, currentEpoch, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
+    if (currentLOD === 1 && !map.hasLayer(contLayer)) {
+      map.addLayer(contLayer);
+    }
+  }, [continentsGeo, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
 
   // ---------------------------------------------------------------------------
-  // Layer 1B: Continent & Ocean Watermarks (Level 1 [1.0, 2.5) only)
+  // Layer 1B: Continent & Ocean Watermarks (Persistent: Instantiated ONCE)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !continentsData) return;
-
-    if (continentsWatermarksLayerRef.current) {
-      map.removeLayer(continentsWatermarksLayerRef.current);
-      continentsWatermarksLayerRef.current = null;
-    }
-
-    // Watermarks only active in Level 1
-    if (currentLOD !== 1) return;
+    if (!map || !continentsData || continentsWatermarksLayerRef.current) return;
 
     const layerGroup = L.layerGroup();
 
     WRAP_OFFSETS.forEach((offset) => {
-      // Continent Watermarks
-      continentsData.continents.forEach((cont) => {
+      continentsData.continents?.forEach((cont) => {
         const html = `
           <div class="pointer-events-none select-none text-center transition-all duration-300">
             <div class="text-[12px] md:text-[13px] font-black tracking-[0.25em] text-slate-900/90 font-sans uppercase drop-shadow-[0_1px_2px_rgba(255,255,255,0.4)]">
@@ -1161,8 +1177,7 @@ export default function MapView({ isActive = true }) {
         L.marker([cont.lat, cont.lng + offset], { icon, interactive: false }).addTo(layerGroup);
       });
 
-      // Ocean Watermarks
-      continentsData.oceans.forEach((ocean) => {
+      continentsData.oceans?.forEach((ocean) => {
         const html = `
           <div class="pointer-events-none select-none text-center opacity-60">
             <div class="text-[12px] font-medium tracking-[0.4em] text-sky-300/60 uppercase font-serif italic">
@@ -1183,40 +1198,33 @@ export default function MapView({ isActive = true }) {
       });
     });
 
-    layerGroup.addTo(map);
     continentsWatermarksLayerRef.current = layerGroup;
+    if (currentLOD === 1 && !map.hasLayer(layerGroup)) {
+      map.addLayer(layerGroup);
+    }
   }, [continentsData, currentLOD]);
 
   // ---------------------------------------------------------------------------
-  // Layer 2A: Countries Vector Layer (Level 2 [2.5, 4.5): Country boundaries & hover)
+  // Layer 2: Countries Vector Layer (Persistent: Instantiated ONCE)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !countriesGeo) return;
-
-    if (countriesLayerRef.current) {
-      map.removeLayer(countriesLayerRef.current);
-      countriesLayerRef.current = null;
-    }
-
-    // Active strictly in Level 2
-    if (currentLOD !== 2) return;
-
-    const epochColors = currentEpoch?.regionColors || {};
-    const epochPlates = currentEpoch?.platesData || {};
+    if (!map || !countriesGeo || countriesLayerRef.current) return;
 
     const geoLayer = L.geoJSON(countriesGeo, {
       renderer: canvasRendererRef.current,
       style: (feature) => {
+        const epochColors = currentEpochRef.current?.regionColors || {};
+        const epochPlates = currentEpochRef.current?.platesData || {};
         const id = feature.properties?.id || feature.properties?.name;
         const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
         const customColor = plateData.color || epochColors[id] || epochColors[feature.properties?.name_en];
 
         return {
           noClip: true,
-          fillColor: customColor || '#38bdf8', // Default bright blue (#38BDF8)
+          fillColor: customColor || '#38bdf8',
           fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.75)', // Scheme 1: Prominent country boundary lines
+          color: 'rgba(255, 255, 255, 0.75)',
           weight: 2.0,
           lineJoin: 'round'
         };
@@ -1226,12 +1234,7 @@ export default function MapView({ isActive = true }) {
         const nameEn = feature.properties?.name_en || '';
         const id = feature.properties?.id || name;
         const parentName = feature.properties?.continent || '';
-        const plateData = epochPlates[id] || epochPlates[name] || {};
-        const displayName = plateData.name || name;
-        const displayColor = plateData.color || epochColors[id] || '';
-        const description = plateData.description || '';
 
-        // Hover effect: Highlights the country
         layer.on('mouseover', (e) => {
           const l = e.target;
           l.setStyle({
@@ -1241,6 +1244,13 @@ export default function MapView({ isActive = true }) {
           });
           l.bringToFront();
           const orig = e.originalEvent;
+          const epochColors = currentEpochRef.current?.regionColors || {};
+          const epochPlates = currentEpochRef.current?.platesData || {};
+          const plateData = epochPlates[id] || epochPlates[name] || {};
+          const displayName = plateData.name || name;
+          const displayColor = plateData.color || epochColors[id] || '';
+          const description = plateData.description || '';
+
           showHoverPlate({
             id,
             name: displayName,
@@ -1266,6 +1276,13 @@ export default function MapView({ isActive = true }) {
         layer.on('click', (e) => {
           L.DomEvent.stopPropagation(e);
           hideHoverPlate();
+          const epochColors = currentEpochRef.current?.regionColors || {};
+          const epochPlates = currentEpochRef.current?.platesData || {};
+          const plateData = epochPlates[id] || epochPlates[name] || {};
+          const displayName = plateData.name || name;
+          const displayColor = plateData.color || epochColors[id] || '';
+          const description = plateData.description || '';
+
           setEditingPlateTarget({
             id,
             name: displayName,
@@ -1280,33 +1297,24 @@ export default function MapView({ isActive = true }) {
       }
     });
 
-    geoLayer.addTo(map);
     countriesLayerRef.current = geoLayer;
-  }, [countriesGeo, currentEpoch, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
+    if (currentLOD === 2 && !map.hasLayer(geoLayer)) {
+      map.addLayer(geoLayer);
+    }
+  }, [countriesGeo, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
 
   // ---------------------------------------------------------------------------
-  // Layer 3: Worldwide Provinces & States Vector Layer (Level 3 [4.5, +∞))
-  // High detail: US states, China, Canada, Australia, Brazil, Japan, Russia, India, Europe, etc.
-  // Viewport culling active: renderer padding 0.35 skimmer skips 95% offscreen polygons
+  // Layer 3: Worldwide Provinces & States Vector Layer (Persistent: Instantiated ONCE)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !provincesGeo) return;
-
-    if (provincesLayerRef.current) {
-      map.removeLayer(provincesLayerRef.current);
-      provincesLayerRef.current = null;
-    }
-
-    // Only active in Level 3 (currentLOD === 3)
-    if (currentLOD !== 3) return;
-
-    const epochColors = currentEpoch?.regionColors || {};
-    const epochPlates = currentEpoch?.platesData || {};
+    if (!map || !provincesGeo || provincesLayerRef.current) return;
 
     const provLayer = L.geoJSON(provincesGeo, {
       renderer: canvasRendererRef.current,
       style: (feature) => {
+        const epochColors = currentEpochRef.current?.regionColors || {};
+        const epochPlates = currentEpochRef.current?.platesData || {};
         const id = feature.properties?.id || feature.properties?.name;
         const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
         const customColor = plateData.color || epochColors[id];
@@ -1314,7 +1322,7 @@ export default function MapView({ isActive = true }) {
         return {
           fillColor: customColor || '#38bdf8',
           fillOpacity: 1.0,
-          color: 'rgba(255, 255, 255, 0.5)', // Scheme 1: Crisp visible province boundary line
+          color: 'rgba(255, 255, 255, 0.5)',
           weight: 1.5,
           lineJoin: 'round'
         };
@@ -1324,10 +1332,6 @@ export default function MapView({ isActive = true }) {
         const nameEn = feature.properties?.name_en || '';
         const id = feature.properties?.id || name;
         const parentName = feature.properties?.country || feature.properties?.admin || '所属国家';
-        const plateData = epochPlates[id] || epochPlates[name] || {};
-        const displayName = plateData.name || name;
-        const displayColor = plateData.color || epochColors[id] || '';
-        const description = plateData.description || '';
 
         layer.on('mouseover', (e) => {
           const l = e.target;
@@ -1338,6 +1342,13 @@ export default function MapView({ isActive = true }) {
           });
           l.bringToFront();
           const orig = e.originalEvent;
+          const epochColors = currentEpochRef.current?.regionColors || {};
+          const epochPlates = currentEpochRef.current?.platesData || {};
+          const plateData = epochPlates[id] || epochPlates[name] || {};
+          const displayName = plateData.name || name;
+          const displayColor = plateData.color || epochColors[id] || '';
+          const description = plateData.description || '';
+
           showHoverPlate({
             id,
             name: displayName,
@@ -1363,6 +1374,13 @@ export default function MapView({ isActive = true }) {
         layer.on('click', (e) => {
           L.DomEvent.stopPropagation(e);
           hideHoverPlate();
+          const epochColors = currentEpochRef.current?.regionColors || {};
+          const epochPlates = currentEpochRef.current?.platesData || {};
+          const plateData = epochPlates[id] || epochPlates[name] || {};
+          const displayName = plateData.name || name;
+          const displayColor = plateData.color || epochColors[id] || '';
+          const description = plateData.description || '';
+
           setEditingPlateTarget({
             id,
             name: displayName,
@@ -1377,9 +1395,105 @@ export default function MapView({ isActive = true }) {
       }
     });
 
-    provLayer.addTo(map);
     provincesLayerRef.current = provLayer;
-  }, [provincesGeo, currentEpoch, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
+    if (currentLOD === 3 && !map.hasLayer(provLayer)) {
+      map.addLayer(provLayer);
+    }
+  }, [provincesGeo, currentLOD, showHoverPlate, updateHoverCardPos, hideHoverPlate]);
+
+  // ---------------------------------------------------------------------------
+  // Fast Style Updater on Epoch or Plate Color Edit (0 layer recreation!)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const epochColors = currentEpoch?.regionColors || {};
+    const epochPlates = currentEpoch?.platesData || {};
+
+    if (continentsVectorLayerRef.current) {
+      continentsVectorLayerRef.current.setStyle((feature) => {
+        const id = feature.properties?.id || feature.properties?.name;
+        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
+        const customColor = plateData.color || epochColors[id] || epochColors[feature.properties?.name_en];
+        return {
+          noClip: true,
+          fillColor: customColor || '#38bdf8',
+          fillOpacity: 1.0,
+          color: 'rgba(255, 255, 255, 0.65)',
+          weight: 2.5,
+          lineJoin: 'round'
+        };
+      });
+    }
+
+    if (countriesLayerRef.current) {
+      countriesLayerRef.current.setStyle((feature) => {
+        const id = feature.properties?.id || feature.properties?.name;
+        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
+        const customColor = plateData.color || epochColors[id] || epochColors[feature.properties?.name_en];
+        return {
+          noClip: true,
+          fillColor: customColor || '#38bdf8',
+          fillOpacity: 1.0,
+          color: 'rgba(255, 255, 255, 0.75)',
+          weight: 2.0,
+          lineJoin: 'round'
+        };
+      });
+    }
+
+    if (provincesLayerRef.current) {
+      provincesLayerRef.current.setStyle((feature) => {
+        const id = feature.properties?.id || feature.properties?.name;
+        const plateData = epochPlates[id] || epochPlates[feature.properties?.name] || {};
+        const customColor = plateData.color || epochColors[id];
+        return {
+          fillColor: customColor || '#38bdf8',
+          fillOpacity: 1.0,
+          color: 'rgba(255, 255, 255, 0.5)',
+          weight: 1.5,
+          lineJoin: 'round'
+        };
+      });
+    }
+  }, [currentEpoch]);
+
+  // ---------------------------------------------------------------------------
+  // Fast Instant LOD Switcher: Add / Remove already-instantiated layers in 1ms (0 recreation!)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    hideHoverPlate();
+
+    const contLayer = continentsVectorLayerRef.current;
+    const watermarksLayer = continentsWatermarksLayerRef.current;
+    const countLayer = countriesLayerRef.current;
+    const provLayer = provincesLayerRef.current;
+
+    if (currentLOD === 1) {
+      if (provLayer && map.hasLayer(provLayer)) map.removeLayer(provLayer);
+      if (countLayer && map.hasLayer(countLayer)) map.removeLayer(countLayer);
+      if (contLayer && !map.hasLayer(contLayer)) map.addLayer(contLayer);
+      if (watermarksLayer && !map.hasLayer(watermarksLayer)) map.addLayer(watermarksLayer);
+    } else if (currentLOD === 2) {
+      if (provLayer && map.hasLayer(provLayer)) map.removeLayer(provLayer);
+      if (contLayer && map.hasLayer(contLayer)) map.removeLayer(contLayer);
+      if (watermarksLayer && map.hasLayer(watermarksLayer)) map.removeLayer(watermarksLayer);
+      if (countLayer && !map.hasLayer(countLayer)) map.addLayer(countLayer);
+    } else if (currentLOD === 3) {
+      if (contLayer && map.hasLayer(contLayer)) map.removeLayer(contLayer);
+      if (watermarksLayer && map.hasLayer(watermarksLayer)) map.removeLayer(watermarksLayer);
+      if (countLayer && map.hasLayer(countLayer)) map.removeLayer(countLayer);
+      if (provLayer && !map.hasLayer(provLayer)) map.addLayer(provLayer);
+    }
+
+    if (canvasLabelsLayerRef.current) {
+      canvasLabelsLayerRef.current._update();
+    }
+    if (canvasRendererRef.current) {
+      canvasRendererRef.current._update();
+    }
+  }, [currentLOD, continentsGeo, countriesGeo, provincesGeo, continentsData, hideHoverPlate]);
 
   // ---------------------------------------------------------------------------
   // GPU Canvas Labels Data Synchronization
