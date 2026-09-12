@@ -1209,7 +1209,7 @@ export default function MapView({ isActive = true }) {
         return {
           noClip: true,
           fillColor: customColor || '#38bdf8', // Default bright blue (#38BDF8)
-          fillOpacity: customColor ? 0.95 : 0.88,
+          fillOpacity: 1.0,
           color: 'rgba(255, 255, 255, 0.75)', // Scheme 1: Prominent country boundary lines
           weight: 2.0,
           lineJoin: 'round'
@@ -1307,7 +1307,7 @@ export default function MapView({ isActive = true }) {
 
         return {
           fillColor: customColor || '#38bdf8',
-          fillOpacity: customColor ? 0.95 : 0.88,
+          fillOpacity: 1.0,
           color: 'rgba(255, 255, 255, 0.5)', // Scheme 1: Crisp visible province boundary line
           weight: 1.5,
           lineJoin: 'round'
