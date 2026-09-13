@@ -2,9 +2,9 @@
   "timelineSettings": {
     "minYear": 2000,
     "maxYear": 2100,
-    "leftBound": 2000,
-    "rightBound": 2042,
-    "currentTime": 2024
+    "leftBound": 2015,
+    "rightBound": 2036,
+    "currentTime": 2000
   },
   "currentEpochId": "epoch-pre-ww3",
   "epochs": [
