@@ -480,6 +480,151 @@ export default function MapView({ isActive = true }) {
     currentEpochRef.current = currentEpoch;
   }, [currentEpoch]);
 
+  const epochMin = currentEpoch?.timeRange?.[0] ?? -1000;
+  const epochMax = currentEpoch?.timeRange?.[1] ?? 2100;
+
+  // Clamped bounds strictly restricted to current epoch
+  const savedLeft = Math.max(epochMin, Math.min(epochMax, timelineSettings.leftBound ?? epochMin));
+  const savedRight = Math.min(epochMax, Math.max(epochMin, timelineSettings.rightBound ?? epochMax));
+
+  // Local bounds for real-time smooth interaction at 60fps
+  const [activeLeft, setActiveLeft] = useState(savedLeft);
+  const [activeRight, setActiveRight] = useState(savedRight);
+
+  useEffect(() => {
+    setActiveLeft(savedLeft);
+  }, [savedLeft]);
+
+  useEffect(() => {
+    setActiveRight(savedRight);
+  }, [savedRight]);
+
+  const clampedLeft = activeLeft;
+  const clampedRight = activeRight;
+
+  // Numeric text inputs for manual input
+  const [leftInputVal, setLeftInputVal] = useState(String(clampedLeft));
+  const [rightInputVal, setRightInputVal] = useState(String(clampedRight));
+
+  useEffect(() => {
+    setLeftInputVal(String(clampedLeft));
+  }, [clampedLeft]);
+
+  useEffect(() => {
+    setRightInputVal(String(clampedRight));
+  }, [clampedRight]);
+
+  const handleCommitLeft = () => {
+    const num = parseInt(leftInputVal, 10);
+    if (isNaN(num)) {
+      setLeftInputVal(String(activeLeft));
+      return;
+    }
+    const val = Math.max(epochMin, Math.min(activeRight, num));
+    setLeftInputVal(String(val));
+    setActiveLeft(val);
+    if (val !== activeLeft) {
+      setTimelineBounds(val, activeRight);
+    }
+  };
+
+  const handleCommitRight = () => {
+    const num = parseInt(rightInputVal, 10);
+    if (isNaN(num)) {
+      setRightInputVal(String(activeRight));
+      return;
+    }
+    const val = Math.max(activeLeft, Math.min(epochMax, num));
+    setRightInputVal(String(val));
+    setActiveRight(val);
+    if (val !== activeRight) {
+      setTimelineBounds(activeLeft, val);
+    }
+  };
+
+  // Dragging interaction state for DualHandleSlider
+  const timelineTrackRef = useRef(null);
+  const [draggingHandle, setDraggingHandle] = useState(null);
+
+  const span = Math.max(1, epochMax - epochMin);
+  const leftPercent = Math.max(0, Math.min(100, ((clampedLeft - epochMin) / span) * 100));
+  const rightPercent = Math.max(0, Math.min(100, ((clampedRight - epochMin) / span) * 100));
+
+  const handlePointerDown = (handle, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingHandle(handle);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (handle, e) => {
+    if (draggingHandle !== handle || !timelineTrackRef.current) return;
+    const rect = timelineTrackRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const year = Math.round(epochMin + ratio * span);
+
+    if (handle === 'left') {
+      const clamped = Math.max(epochMin, Math.min(activeRight, year));
+      if (clamped !== activeLeft) {
+        setActiveLeft(clamped);
+        setLeftInputVal(String(clamped));
+      }
+    } else if (handle === 'right') {
+      const clamped = Math.max(activeLeft, Math.min(epochMax, year));
+      if (clamped !== activeRight) {
+        setActiveRight(clamped);
+        setRightInputVal(String(clamped));
+      }
+    }
+  };
+
+  const handlePointerUp = (handle, e) => {
+    if (draggingHandle === handle) {
+      setDraggingHandle(null);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+      // Persist final bounds to store on release
+      setTimelineBounds(activeLeft, activeRight);
+    }
+  };
+
+  const handleTrackClick = (e) => {
+    if (!timelineTrackRef.current || draggingHandle) return;
+    const rect = timelineTrackRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const clickedYear = Math.round(epochMin + ratio * span);
+
+    const distToLeft = Math.abs(clickedYear - activeLeft);
+    const distToRight = Math.abs(clickedYear - activeRight);
+
+    if (distToLeft < distToRight) {
+      const clamped = Math.max(epochMin, Math.min(activeRight, clickedYear));
+      setActiveLeft(clamped);
+      setLeftInputVal(String(clamped));
+      setTimelineBounds(clamped, activeRight);
+    } else {
+      const clamped = Math.max(activeLeft, Math.min(epochMax, clickedYear));
+      setActiveRight(clamped);
+      setRightInputVal(String(clamped));
+      setTimelineBounds(activeLeft, clamped);
+    }
+  };
+
+  const handleSelectEpoch = (ep) => {
+    setCurrentEpochId(ep.id);
+    const epStart = ep.timeRange?.[0] ?? -1000;
+    const epEnd = ep.timeRange?.[1] ?? 2100;
+    setActiveLeft(epStart);
+    setActiveRight(epEnd);
+    setLeftInputVal(String(epStart));
+    setRightInputVal(String(epEnd));
+    setTimelineBounds(epStart, epEnd);
+    if (epStart !== undefined) {
+      setCurrentTime(epStart);
+    }
+  };
+
   // UI state
   const [zoomLevel, setZoomLevel] = useState(1.8);
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
@@ -635,20 +780,16 @@ export default function MapView({ isActive = true }) {
   }, [isActive]);
 
   const filteredEvents = useMemo(() => {
-    const left = timelineSettings.leftBound ?? -1000;
-    const right = timelineSettings.rightBound ?? 2100;
     return timeline.filter((evt) => {
       const yr = evt.year ?? 0;
-      return yr >= left && yr <= right;
+      return yr >= clampedLeft && yr <= clampedRight;
     });
-  }, [timeline, timelineSettings.leftBound, timelineSettings.rightBound]);
+  }, [timeline, clampedLeft, clampedRight]);
 
   const filteredLocations = useMemo(() => {
-    const left = timelineSettings.leftBound ?? -1000;
-    const right = timelineSettings.rightBound ?? 2100;
     return locations.filter((loc) => {
       const yr = loc.year ?? 2024;
-      if (yr < left || yr > right) return false;
+      if (yr < clampedLeft || yr > clampedRight) return false;
       if (searchKeyword.trim()) {
         const kw = searchKeyword.toLowerCase();
         return (
@@ -659,7 +800,7 @@ export default function MapView({ isActive = true }) {
       }
       return true;
     });
-  }, [locations, timelineSettings.leftBound, timelineSettings.rightBound, searchKeyword]);
+  }, [locations, clampedLeft, clampedRight, searchKeyword]);
 
   const selectedLocation = useMemo(() => {
     return locations.find((l) => l.id === selectedMapLocationId) || null;
@@ -1382,15 +1523,18 @@ export default function MapView({ isActive = true }) {
 
           <button
             onClick={() => setIsTimelineOpen(!isTimelineOpen)}
-            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all ${
               isTimelineOpen
-                ? 'bg-slate-800 border-slate-700 text-sky-400'
+                ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
                 : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
             }`}
-            title="展开或折叠双边界时间轴"
+            title="展开或折叠时空双边界时间轴"
           >
-            <Clock className="w-3.5 h-3.5" />
-            <span>时间轴</span>
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span className="font-semibold">{currentEpoch?.name || '时空时间轴'}</span>
+            <span className="text-[10px] font-mono text-slate-400 hidden sm:inline">
+              ({clampedLeft} ~ {clampedRight}年)
+            </span>
             {isTimelineOpen ? (
               <ChevronDown className="w-3.5 h-3.5" />
             ) : (
@@ -1408,39 +1552,6 @@ export default function MapView({ isActive = true }) {
           </button>
         </div>
       </header>
-
-      {/* Floating Map Historical Epoch Switcher */}
-      <div className="absolute top-16 left-6 z-20 flex items-center gap-1 bg-slate-900/90 backdrop-blur-md p-1 rounded-xl border border-slate-800 shadow-xl">
-        <span className="text-[10px] font-bold text-slate-400 px-2 flex items-center gap-1 uppercase tracking-wider">
-          <History className="w-3.5 h-3.5 text-amber-400" />
-          地图时空变迁:
-        </span>
-        {epochs.map((ep) => {
-          const isCurrent = ep.id === currentEpochId;
-          return (
-            <button
-              key={ep.id}
-              onClick={() => {
-                setCurrentEpochId(ep.id);
-                if (ep.timeRange && ep.timeRange[0] !== undefined) {
-                  setCurrentTime(ep.timeRange[0]);
-                }
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs transition-all font-medium flex items-center gap-1.5 ${
-                isCurrent
-                  ? 'bg-amber-600 text-white font-bold shadow-md shadow-amber-600/30'
-                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-              }`}
-              title={ep.description}
-            >
-              <span>{ep.name}</span>
-              <span className="text-[9px] opacity-70 font-mono">
-                ({ep.timeRange?.[0]} ~ {ep.timeRange?.[1]})
-              </span>
-            </button>
-          );
-        })}
-      </div>
 
       {/* Adding Mode Notification */}
       {isAddingLocation && (
@@ -1621,34 +1732,82 @@ export default function MapView({ isActive = true }) {
 
       {/* Dual-Boundary Range Interactive Timeline Bar */}
       {isTimelineOpen && (
-        <div className="h-44 border-t border-slate-800 bg-slate-900/95 backdrop-blur-md flex flex-col shrink-0 z-20 shadow-2xl animate-fadeIn">
-          <div className="h-9 border-b border-slate-800/80 px-4 flex items-center justify-between text-xs text-slate-400 shrink-0">
-            <div className="flex items-center gap-3">
+        <div className="h-56 border-t border-slate-800 bg-slate-900/95 backdrop-blur-md flex flex-col shrink-0 z-20 shadow-2xl animate-fadeIn">
+          {/* Header Bar: Epoch Title + Exact Numeric Inputs + Reset + Add Event */}
+          <div className="h-9 border-b border-slate-800/80 px-4 flex items-center justify-between text-xs shrink-0 bg-slate-950/40">
+            <div className="flex items-center gap-2.5">
               <div className="flex items-center gap-1.5 font-bold text-slate-200">
                 <Clock className="w-3.5 h-3.5 text-amber-400" />
-                <span>双边界时间轴</span>
+                <span>时空时间轴</span>
               </div>
 
-              <div className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
-                  左边界: {timelineSettings.leftBound} 年
-                </span>
-                <span className="text-slate-500">→</span>
-                <span className="text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                  右边界: {timelineSettings.rightBound} 年
-                </span>
-                <span className="text-slate-400 text-[10px]">
-                  (仅展示边界内的 {filteredEvents.length} 个事件 · {filteredLocations.length} 个据点)
-                </span>
+              <div className="h-3.5 w-[1px] bg-slate-800" />
+
+              {/* Left Bound Input (Cyan) */}
+              <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-lg border border-cyan-500/30 shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 ring-2 ring-cyan-400/30 shrink-0" />
+                <span className="text-[11px] text-cyan-300 font-medium">起:</span>
+                <input
+                  type="number"
+                  value={leftInputVal}
+                  min={epochMin}
+                  max={clampedRight}
+                  onChange={(e) => setLeftInputVal(e.target.value)}
+                  onBlur={handleCommitLeft}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCommitLeft()}
+                  className="w-16 bg-transparent text-cyan-300 font-mono text-xs font-bold focus:outline-none focus:bg-slate-800/80 rounded px-1 text-center"
+                  title={`当前时期左边界 (范围: ${epochMin} ~ ${clampedRight})`}
+                />
+                <span className="text-[10px] text-slate-400 font-mono">年</span>
               </div>
+
+              <span className="text-slate-500 font-bold">~</span>
+
+              {/* Right Bound Input (Yellow) */}
+              <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-lg border border-yellow-500/30 shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-yellow-400 ring-2 ring-yellow-400/30 shrink-0" />
+                <span className="text-[11px] text-yellow-300 font-medium">止:</span>
+                <input
+                  type="number"
+                  value={rightInputVal}
+                  min={clampedLeft}
+                  max={epochMax}
+                  onChange={(e) => setRightInputVal(e.target.value)}
+                  onBlur={handleCommitRight}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCommitRight()}
+                  className="w-16 bg-transparent text-yellow-300 font-mono text-xs font-bold focus:outline-none focus:bg-slate-800/80 rounded px-1 text-center"
+                  title={`当前时期右边界 (范围: ${clampedLeft} ~ ${epochMax})`}
+                />
+                <span className="text-[10px] text-slate-400 font-mono">年</span>
+              </div>
+
+              {/* Reset to Full Epoch Button */}
+              <button
+                onClick={() => {
+                  setActiveLeft(epochMin);
+                  setActiveRight(epochMax);
+                  setLeftInputVal(String(epochMin));
+                  setRightInputVal(String(epochMax));
+                  setTimelineBounds(epochMin, epochMax);
+                }}
+                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg bg-slate-800/70 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition-colors"
+                title="将左右控制柄重置为当前时期的起止完整范围"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>整期全选</span>
+              </button>
+
+              <span className="text-slate-400 text-[10px] hidden md:inline">
+                (跨度 {clampedRight - clampedLeft} 年 · 呈现 {filteredEvents.length} 个事件 / {filteredLocations.length} 个据点)
+              </span>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <button
                 onClick={() =>
                   setEditingEvent({
-                    year: timelineSettings.currentTime || 2024,
-                    timeLabel: `${timelineSettings.currentTime || 2024}年`,
+                    year: clampedLeft,
+                    timeLabel: `${clampedLeft}年`,
                     title: '',
                     epochId: currentEpochId,
                     description: '',
@@ -1656,74 +1815,138 @@ export default function MapView({ isActive = true }) {
                     tag: '新主线'
                   })
                 }
-                className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 font-medium hover:underline"
+                className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 font-medium hover:underline bg-sky-500/10 hover:bg-sky-500/20 px-2.5 py-1 rounded-lg border border-sky-500/30 transition-all"
               >
                 <Plus className="w-3 h-3" /> 添加时间点事件
               </button>
             </div>
           </div>
 
-          <div className="px-6 py-2 border-b border-slate-800/60 bg-slate-950/60 flex items-center gap-4">
-            <div className="flex-1 flex flex-col gap-1">
-              <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
-                <span>起始 -1000年</span>
-                <span className="text-amber-300 font-bold">
-                  指针时刻: {timelineSettings.currentTime} 年
-                </span>
-                <span>未来 +2100年</span>
+          {/* Section 1: Contiguous Proportional Epoch Segmented Bar */}
+          <div className="px-4 py-1.5 bg-slate-950/70 border-b border-slate-800/60">
+            <div className="w-full flex items-stretch border border-slate-700/80 rounded-xl overflow-hidden divide-x divide-slate-800 bg-slate-900/60 shadow-inner">
+              {epochs.map((ep) => {
+                const isCurrent = ep.id === currentEpochId;
+                const epStart = ep.timeRange?.[0] ?? -1000;
+                const epEnd = ep.timeRange?.[1] ?? 2100;
+                const duration = Math.max(50, epEnd - epStart);
+
+                return (
+                  <button
+                    key={ep.id}
+                    onClick={() => handleSelectEpoch(ep)}
+                    style={{
+                      flex: `${Math.max(duration, 180)} 1 0%`,
+                      minWidth: '130px'
+                    }}
+                    className={`relative px-3 py-1.5 text-left transition-all group flex flex-col justify-center select-none ${
+                      isCurrent
+                        ? 'bg-gradient-to-r from-amber-500/20 to-amber-600/10 text-white shadow-md'
+                        : 'bg-slate-900/40 text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                    }`}
+                    title={`${ep.name}\n${epStart}年 ~ ${epEnd}年 (时长: ${duration}年)\n${ep.description || ''}`}
+                  >
+                    {/* Active top line highlight */}
+                    {isCurrent && (
+                      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500" />
+                    )}
+                    <div className="flex items-center justify-between gap-1">
+                      <span className={`text-xs font-bold truncate ${isCurrent ? 'text-amber-300 font-extrabold' : 'text-slate-300 group-hover:text-white'}`}>
+                        {ep.name}
+                      </span>
+                      {isCurrent && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-0.5">
+                      <span>{epStart} ~ {epEnd}</span>
+                      <span className="opacity-75">({duration}年)</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Section 2: Custom Dual-Handle Range Slider within Current Epoch */}
+          <div className="px-6 py-2 border-b border-slate-800/60 bg-slate-950/90 flex flex-col gap-0.5">
+            <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 select-none">
+              <span className="flex items-center gap-1 text-cyan-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                时期起点: {epochMin} 年
+              </span>
+              <span className="text-slate-400">
+                已选区间: <span className="text-cyan-300 font-bold font-mono">{clampedLeft}年</span>
+                <span className="text-slate-500 mx-1">~</span>
+                <span className="text-yellow-300 font-bold font-mono">{clampedRight}年</span>
+              </span>
+              <span className="flex items-center gap-1 text-yellow-400">
+                时期终点: {epochMax} 年
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+              </span>
+            </div>
+
+            <div
+              ref={timelineTrackRef}
+              onClick={handleTrackClick}
+              className="relative w-full h-7 flex items-center cursor-pointer select-none py-2"
+              title="拖动控制柄或点击轨道调整范围"
+            >
+              {/* Inactive Base Track */}
+              <div className="absolute w-full h-2 bg-slate-800 rounded-full border border-slate-700/60" />
+
+              {/* Active Range Gradient Highlight (Cyan to Yellow) */}
+              <div
+                className="absolute h-2 bg-gradient-to-r from-cyan-400 via-sky-400 to-yellow-400 rounded-full shadow-[0_0_8px_rgba(6,182,212,0.4)]"
+                style={{
+                  left: `${leftPercent}%`,
+                  width: `${Math.max(0, rightPercent - leftPercent)}%`
+                }}
+              />
+
+              {/* Left Handle (Cyan Circle with Dark Center) */}
+              <div
+                role="slider"
+                aria-label="时间轴左边界控制柄"
+                aria-valuenow={clampedLeft}
+                aria-valuemin={epochMin}
+                aria-valuemax={clampedRight}
+                tabIndex={0}
+                onPointerDown={(e) => handlePointerDown('left', e)}
+                onPointerMove={(e) => handlePointerMove('left', e)}
+                onPointerUp={(e) => handlePointerUp('left', e)}
+                style={{ left: `${leftPercent}%` }}
+                className="absolute -translate-x-1/2 w-5 h-5 rounded-full bg-cyan-400 border-2 border-slate-950 shadow-lg shadow-cyan-500/50 cursor-ew-resize flex items-center justify-center hover:scale-125 active:scale-130 transition-transform z-10 touch-none ring-2 ring-cyan-400/40"
+                title={`左边界控制柄: ${clampedLeft}年 (拖拽调节)`}
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-950" />
               </div>
 
-              <div className="relative w-full h-6 flex items-center">
-                <div className="absolute w-full h-1.5 bg-slate-800 rounded-full" />
-                <div
-                  className="absolute h-1.5 bg-gradient-to-r from-sky-500 to-amber-500 rounded-full"
-                  style={{
-                    left: `${((timelineSettings.leftBound + 1000) / 3100) * 100}%`,
-                    width: `${
-                      ((timelineSettings.rightBound - timelineSettings.leftBound) / 3100) * 100
-                    }%`
-                  }}
-                />
-
-                <input
-                  type="range"
-                  min="-1000"
-                  max="2100"
-                  step="10"
-                  value={timelineSettings.leftBound}
-                  onChange={(e) => {
-                    const newLeft = Number(e.target.value);
-                    if (newLeft < timelineSettings.rightBound) {
-                      setTimelineBounds(newLeft, timelineSettings.rightBound);
-                    }
-                  }}
-                  className="absolute w-full appearance-none bg-transparent pointer-events-auto cursor-pointer accent-sky-400"
-                  title="调节左边界"
-                />
-
-                <input
-                  type="range"
-                  min="-1000"
-                  max="2100"
-                  step="10"
-                  value={timelineSettings.rightBound}
-                  onChange={(e) => {
-                    const newRight = Number(e.target.value);
-                    if (newRight > timelineSettings.leftBound) {
-                      setTimelineBounds(timelineSettings.leftBound, newRight);
-                    }
-                  }}
-                  className="absolute w-full appearance-none bg-transparent pointer-events-auto cursor-pointer accent-amber-400"
-                  title="调节右边界"
-                />
+              {/* Right Handle (Yellow Capsule/Circle with Dark Center) */}
+              <div
+                role="slider"
+                aria-label="时间轴右边界控制柄"
+                aria-valuenow={clampedRight}
+                aria-valuemin={clampedLeft}
+                aria-valuemax={epochMax}
+                tabIndex={0}
+                onPointerDown={(e) => handlePointerDown('right', e)}
+                onPointerMove={(e) => handlePointerMove('right', e)}
+                onPointerUp={(e) => handlePointerUp('right', e)}
+                style={{ left: `${rightPercent}%` }}
+                className="absolute -translate-x-1/2 w-5 h-5 rounded-full bg-yellow-400 border-2 border-slate-950 shadow-lg shadow-yellow-500/50 cursor-ew-resize flex items-center justify-center hover:scale-125 active:scale-130 transition-transform z-10 touch-none ring-2 ring-yellow-400/40"
+                title={`右边界控制柄: ${clampedRight}年 (拖拽调节)`}
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-950" />
               </div>
             </div>
           </div>
 
-          <div className="flex-1 overflow-x-auto overflow-y-hidden px-4 py-2 flex items-center gap-3 scrollbar-thin">
+          {/* Section 3: Event Cards Horizontal List */}
+          <div className="flex-1 overflow-x-auto overflow-y-hidden px-4 py-2 flex items-center gap-3 scrollbar-thin min-h-[78px]">
             {filteredEvents.length === 0 ? (
-              <div className="w-full text-center text-xs text-slate-400 py-3">
-                当前左右边界区间 ({timelineSettings.leftBound} ~ {timelineSettings.rightBound}) 内暂无事件，可拖动上方滑块放大范围或点击“添加时间点事件”。
+              <div className="w-full text-center text-xs text-slate-400 py-2">
+                当前时期区间 ({clampedLeft} ~ {clampedRight}年) 内暂无事件，可拖动上方控制柄放大范围或点击“添加时间点事件”。
               </div>
             ) : (
               filteredEvents.map((evt) => {
