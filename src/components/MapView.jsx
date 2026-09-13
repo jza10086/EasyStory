@@ -31,7 +31,9 @@ import {
   Trash2,
   Check,
   ExternalLink,
-  ChevronRight
+  ChevronRight,
+  Plus,
+  Move
 } from 'lucide-react';
 
 const COLOR_PRESETS = [
@@ -708,7 +710,7 @@ function CreateLocationModal({ data, currentEpoch, epochs, onClose, onSave }) {
 // ---------------------------------------------------------------------------
 // Singleton Location Detail Popover on Map
 // ---------------------------------------------------------------------------
-function LocationDetailCard({ location, currentEpoch, onClose, onEdit, onDelete, onOpenDatabase }) {
+function LocationDetailCard({ location, currentEpoch, onClose, onEdit, onMove, onDelete, onOpenDatabase }) {
   if (!location) return null;
   const themeColor = location.color || '#38bdf8';
 
@@ -787,12 +789,215 @@ function LocationDetailCard({ location, currentEpoch, onClose, onEdit, onDelete,
         </button>
 
         <button
+          onClick={() => onMove(location)}
+          className="p-1.5 bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors"
+          title="移动此地点 (在地图重新放置)"
+        >
+          <Move className="w-3.5 h-3.5" />
+        </button>
+
+        <button
           onClick={() => onDelete(location)}
           className="p-1.5 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors"
           title="删除此地点"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Right-Click Context Menu for Map & Locations
+// ---------------------------------------------------------------------------
+function MapContextMenu({
+  contextMenu,
+  selectedLocation,
+  movingLocation,
+  onClose,
+  onCreate,
+  onEdit,
+  onStartMove,
+  onExecuteMove,
+  onDelete,
+  onOpenDatabase
+}) {
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState({ x: contextMenu.x, y: contextMenu.y });
+
+  useEffect(() => {
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      const padding = 12;
+      let x = contextMenu.x;
+      let y = contextMenu.y;
+
+      if (x + rect.width > window.innerWidth - padding) {
+        x = Math.max(padding, window.innerWidth - rect.width - padding);
+      }
+      if (y + rect.height > window.innerHeight - padding) {
+        y = Math.max(padding, window.innerHeight - rect.height - padding);
+      }
+      setPos({ x, y });
+    }
+  }, [contextMenu.x, contextMenu.y]);
+
+  useEffect(() => {
+    const handlePointerDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => window.removeEventListener('pointerdown', handlePointerDown);
+  }, [onClose]);
+
+  const target = contextMenu.targetLocation;
+  const activeLoc = target || movingLocation || selectedLocation;
+
+  return (
+    <div
+      ref={menuRef}
+      style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
+      className="fixed z-50 min-w-[210px] max-w-[280px] bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-2xl p-1.5 text-xs text-slate-200 select-none animate-scaleUp"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Header */}
+      {target ? (
+        <div className="px-2.5 py-1.5 mb-1.5 bg-slate-950/70 rounded-lg border border-slate-800/80">
+          <div className="flex items-center gap-2 font-bold text-white truncate">
+            <span
+              className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
+              style={{ backgroundColor: target.color || '#38bdf8' }}
+            />
+            <span className="truncate">{target.name || target.title}</span>
+            <span className="ml-auto text-[10px] px-1.5 py-0.2 rounded bg-sky-950 text-sky-300 border border-sky-800 shrink-0 font-normal">
+              {target.tag || '地点'}
+            </span>
+          </div>
+          <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+            {target.hierarchyText || [target.continent, target.country, target.province].filter(Boolean).join(' · ')}
+          </div>
+          <div className="text-[9px] text-slate-500 font-mono">
+            [{Number(target.lng).toFixed(4)}°, {Number(target.lat).toFixed(4)}°]
+          </div>
+        </div>
+      ) : (
+        <div className="px-2.5 py-1.5 mb-1.5 bg-slate-950/70 rounded-lg border border-slate-800/80">
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-sky-400">
+            <Compass className="w-3 h-3 text-sky-400 shrink-0" />
+            <span>地图坐标点</span>
+          </div>
+          <div className="text-[10px] text-slate-300 font-medium truncate mt-0.5">
+            {contextMenu.geoInfo?.hierarchyText || `${contextMenu.geoInfo?.country || '公海'} · ${contextMenu.geoInfo?.province || ''}`}
+          </div>
+          <div className="text-[9px] text-slate-500 font-mono">
+            [{Number(contextMenu.lng).toFixed(4)}°, {Number(contextMenu.lat).toFixed(4)}°]
+          </div>
+        </div>
+      )}
+
+      {/* Menu Actions */}
+      <div className="space-y-0.5">
+        {/* 1. Create Location Here */}
+        <button
+          onClick={() => {
+            onCreate({
+              lng: contextMenu.lng,
+              lat: contextMenu.lat,
+              geoInfo: contextMenu.geoInfo
+            });
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-sky-600/25 transition-colors group"
+        >
+          <Plus className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform shrink-0" />
+          <span className="flex-1 font-medium">在此处新建地点</span>
+        </button>
+
+        {/* 2. Relocate to Here */}
+        {!target && activeLoc && (
+          <button
+            onClick={() => {
+              onExecuteMove(activeLoc, {
+                lng: contextMenu.lng,
+                lat: contextMenu.lat,
+                geoInfo: contextMenu.geoInfo
+              });
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-cyan-300 hover:text-white hover:bg-cyan-600/30 transition-colors group border border-cyan-500/30 bg-cyan-950/30"
+          >
+            <Move className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform shrink-0" />
+            <span className="flex-1 font-medium truncate">
+              将「{activeLoc.name || activeLoc.title}」移动到此处
+            </span>
+          </button>
+        )}
+
+        {/* 3. Edit Location */}
+        {activeLoc && (
+          <button
+            onClick={() => {
+              onEdit(activeLoc);
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-slate-800 transition-colors group"
+          >
+            <Edit2 className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
+            <span className="flex-1 font-medium truncate">
+              {target ? '编辑此地点' : `编辑已选地点「${activeLoc.name || activeLoc.title}」`}
+            </span>
+          </button>
+        )}
+
+        {/* 4. Move Location */}
+        {target && (
+          <button
+            onClick={() => {
+              onStartMove(target);
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-slate-800 transition-colors group"
+          >
+            <Move className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform shrink-0" />
+            <span className="flex-1 font-medium">移动此地点 (在地图重放)</span>
+          </button>
+        )}
+
+        {/* 5. Delete Location */}
+        {activeLoc && (
+          <button
+            onClick={() => {
+              onDelete(activeLoc);
+              onClose();
+            }}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-rose-400 hover:text-rose-200 hover:bg-rose-600/20 transition-colors group"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400 group-hover:scale-110 transition-transform shrink-0" />
+            <span className="flex-1 font-medium truncate">
+              {target ? '删除此地点' : `删除已选地点「${activeLoc.name || activeLoc.title}」`}
+            </span>
+          </button>
+        )}
+
+        {/* 6. Open in Database */}
+        {activeLoc && (
+          <>
+            <div className="h-px bg-slate-800 my-1" />
+            <button
+              onClick={() => {
+                onOpenDatabase(activeLoc);
+                onClose();
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-300 hover:text-white hover:bg-slate-800 transition-colors group"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:scale-110 transition-transform shrink-0" />
+              <span className="flex-1">在资料库中打开</span>
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1025,6 +1230,38 @@ export default function MapView({ isActive = true }) {
   const [activeLocationCard, setActiveLocationCard] = useState(null);
   const locationMarkersRef = useRef([]);
 
+  // Context menu and moving mode states
+  const [contextMenu, setContextMenu] = useState(null);
+  const [movingLocation, setMovingLocation] = useState(null);
+  const movingLocationRef = useRef(movingLocation);
+  movingLocationRef.current = movingLocation;
+
+  // Change canvas cursor during moving mode
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    try {
+      const canvas = map.getCanvas();
+      if (canvas) {
+        canvas.style.cursor = movingLocation ? 'crosshair' : '';
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [movingLocation]);
+
+  // ESC key listener to cancel moving mode or dismiss context menu
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (contextMenu) setContextMenu(null);
+        if (movingLocation) setMovingLocation(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [contextMenu, movingLocation]);
+
   // Singleton hover card
   const [hoveredPlate, setHoveredPlate] = useState(null);
   const plateHoverCardRef = useRef(null);
@@ -1068,6 +1305,111 @@ export default function MapView({ isActive = true }) {
 
   const hideHoverPlateRef = useRef(hideHoverPlate);
   hideHoverPlateRef.current = hideHoverPlate;
+
+  // Selected location object from active epoch
+  const selectedLocation = useMemo(() => {
+    if (!selectedMapLocationId || !currentEpoch?.locations) return null;
+    return currentEpoch.locations.find((l) => l.id === selectedMapLocationId) || null;
+  }, [selectedMapLocationId, currentEpoch?.locations]);
+
+  const handleCreateLocationAt = useCallback(({ lng, lat, geoInfo }) => {
+    const clickedLng = parseFloat(lng.toFixed(4));
+    const clickedLat = parseFloat(lat.toFixed(4));
+    const gInfo = geoInfo || reverseGeocode(clickedLng, clickedLat);
+    const centerLng = parseFloat((gInfo.centerLng ?? clickedLng).toFixed(4));
+    const centerLat = parseFloat((gInfo.centerLat ?? clickedLat).toFixed(4));
+    const suggestedName = gInfo.province || gInfo.country || '新建立地点';
+
+    setCreatingLocationData({
+      title: suggestedName,
+      name: suggestedName,
+      epochId: currentEpochRef.current?.id || 'epoch-ancient',
+      continent: gInfo.continent,
+      country: gInfo.country,
+      province: gInfo.province,
+      city: gInfo.city,
+      rawLng: clickedLng,
+      rawLat: clickedLat,
+      lng: clickedLng,
+      lat: clickedLat,
+      centerLng: centerLng,
+      centerLat: centerLat,
+      isSnappedToCenter: false,
+      hierarchyText: gInfo.hierarchyText,
+      tags: ['据点'],
+      tag: '据点',
+      color: '#38bdf8',
+      description: '',
+      summary: ''
+    });
+  }, []);
+
+  const handleEditLocation = useCallback((loc) => {
+    if (!loc) return;
+    setActiveLocationCard(null);
+    setCreatingLocationData({
+      ...loc,
+      title: loc.name || loc.title,
+      tag: loc.tags?.[0] || loc.tag || '据点'
+    });
+  }, []);
+
+  const handleStartMove = useCallback((loc) => {
+    if (!loc) return;
+    setActiveLocationCard(null);
+    setMovingLocation(loc);
+  }, []);
+
+  const handleExecuteMove = useCallback(
+    async (locToMove, { lng, lat, geoInfo }) => {
+      if (!locToMove) return;
+      const targetLng = parseFloat(lng.toFixed(4));
+      const targetLat = parseFloat(lat.toFixed(4));
+      const targetGeo = geoInfo || reverseGeocode(targetLng, targetLat);
+
+      const updatedLoc = {
+        ...locToMove,
+        lng: targetLng,
+        lat: targetLat,
+        rawLng: targetLng,
+        rawLat: targetLat,
+        continent: targetGeo.continent || locToMove.continent,
+        country: targetGeo.country || locToMove.country,
+        province: targetGeo.province || locToMove.province,
+        city: targetGeo.city || locToMove.city,
+        hierarchyText: targetGeo.hierarchyText || locToMove.hierarchyText,
+        centerLng: targetGeo.centerLng ?? targetLng,
+        centerLat: targetGeo.centerLat ?? targetLat,
+        isSnappedToCenter: false
+      };
+
+      const targetEpochId = locToMove.epochId || currentEpochRef.current?.id || 'epoch-ancient';
+      await saveEpochLocation(targetEpochId, updatedLoc);
+      setMovingLocation(null);
+      setSelectedMapLocationId(updatedLoc.id);
+      setActiveLocationCard(updatedLoc);
+    },
+    [saveEpochLocation, setSelectedMapLocationId]
+  );
+
+  const handleExecuteMoveRef = useRef(handleExecuteMove);
+  handleExecuteMoveRef.current = handleExecuteMove;
+
+  const handleDeleteLocation = useCallback(
+    async (loc) => {
+      if (!loc) return;
+      if (confirm(`确定要删除地点“${loc.name || loc.title}”吗？`)) {
+        const targetEpochId = loc.epochId || currentEpochRef.current?.id || 'epoch-ancient';
+        await deleteEpochLocation(targetEpochId, loc.id);
+        setActiveLocationCard(null);
+        setSelectedMapLocationId(null);
+        if (movingLocationRef.current?.id === loc.id) {
+          setMovingLocation(null);
+        }
+      }
+    },
+    [deleteEpochLocation, setSelectedMapLocationId]
+  );
 
   // MapLibre refs
   const mapContainerRef = useRef(null);
@@ -1609,8 +1951,30 @@ export default function MapView({ isActive = true }) {
       }, 50);
     });
 
-    // Map-level click (for plate editing target deselection)
+    // Map-level click (for placing moving location, closing context menu, and plate editing deselection)
     map.on('click', (e) => {
+      setContextMenu(null);
+
+      // If in moving mode, drop the moving location at this position
+      if (movingLocationRef.current) {
+        const loc = movingLocationRef.current;
+        const { lng, lat } = e.lngLat;
+        let normalizedLng = (lng + 180) % 360;
+        if (normalizedLng < 0) normalizedLng += 360;
+        normalizedLng -= 180;
+        const normalizedLat = Math.max(-85, Math.min(85, lat));
+        const targetLng = parseFloat(normalizedLng.toFixed(4));
+        const targetLat = parseFloat(normalizedLat.toFixed(4));
+        const geoInfo = reverseGeocode(targetLng, targetLat);
+
+        handleExecuteMoveRef.current?.(loc, {
+          lng: targetLng,
+          lat: targetLat,
+          geoInfo
+        });
+        return;
+      }
+
       if (e.originalEvent?._plateClicked) return;
       hideHoverPlateRef.current?.();
       setEditingPlateTarget(null);
@@ -1618,6 +1982,11 @@ export default function MapView({ isActive = true }) {
 
     map.on('zoomstart', () => {
       hideHoverPlateRef.current?.();
+      setContextMenu(null);
+    });
+
+    map.on('movestart', () => {
+      setContextMenu(null);
     });
 
     // Zoom level update (throttled via RAF)
@@ -1630,7 +1999,7 @@ export default function MapView({ isActive = true }) {
       }
     });
 
-    // Right-click contextmenu handler for establishing a new location at clicked coordinates
+    // Right-click contextmenu handler for summoning custom context menu
     map.on('contextmenu', (e) => {
       e.preventDefault();
       const { lng, lat } = e.lngLat;
@@ -1639,34 +2008,17 @@ export default function MapView({ isActive = true }) {
       normalizedLng -= 180;
       const normalizedLat = Math.max(-85, Math.min(85, lat));
 
-      const geoInfo = reverseGeocode(normalizedLng, normalizedLat);
       const clickedLng = parseFloat(normalizedLng.toFixed(4));
       const clickedLat = parseFloat(normalizedLat.toFixed(4));
-      const centerLng = parseFloat((geoInfo.centerLng ?? clickedLng).toFixed(4));
-      const centerLat = parseFloat((geoInfo.centerLat ?? clickedLat).toFixed(4));
+      const geoInfo = reverseGeocode(clickedLng, clickedLat);
 
-      const suggestedName = geoInfo.province || geoInfo.country || '新建立地点';
-
-      setCreatingLocationData({
-        title: suggestedName,
-        name: suggestedName,
-        epochId: currentEpochRef.current?.id || 'epoch-ancient',
-        continent: geoInfo.continent,
-        country: geoInfo.country,
-        province: geoInfo.province,
-        city: geoInfo.city,
-        rawLng: clickedLng,
-        rawLat: clickedLat,
+      setContextMenu({
+        x: e.originalEvent.clientX,
+        y: e.originalEvent.clientY,
         lng: clickedLng,
         lat: clickedLat,
-        centerLng: centerLng,
-        centerLat: centerLat,
-        isSnappedToCenter: false,
-        hierarchyText: geoInfo.hierarchyText,
-        tags: ['据点'],
-        color: '#38bdf8',
-        description: '',
-        summary: ''
+        geoInfo,
+        targetLocation: null
       });
     });
 
@@ -1756,8 +2108,33 @@ export default function MapView({ isActive = true }) {
 
       el.addEventListener('click', (e) => {
         e.stopPropagation();
+        setContextMenu(null);
+        if (movingLocationRef.current) {
+          const locToMove = movingLocationRef.current;
+          const geoInfo = reverseGeocode(loc.lng, loc.lat);
+          handleExecuteMoveRef.current?.(locToMove, {
+            lng: loc.lng,
+            lat: loc.lat,
+            geoInfo
+          });
+          return;
+        }
         setSelectedMapLocationId(loc.id);
         setActiveLocationCard(loc);
+      });
+
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const geoInfo = reverseGeocode(loc.lng, loc.lat);
+        setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          lng: loc.lng,
+          lat: loc.lat,
+          geoInfo,
+          targetLocation: loc
+        });
       });
 
       try {
@@ -1899,6 +2276,22 @@ export default function MapView({ isActive = true }) {
           }}
         />
 
+        {/* Moving Mode Top Alert Banner */}
+        {movingLocation && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-amber-950/90 border border-amber-500/60 backdrop-blur-md px-4 py-2 rounded-xl shadow-2xl flex items-center gap-3 animate-fadeIn select-none">
+            <Move className="w-4 h-4 text-amber-400 animate-pulse shrink-0" />
+            <span className="text-xs text-amber-200">
+              正在移动地点 <strong className="text-white font-bold">“{movingLocation.name || movingLocation.title}”</strong>：请在地图目标位置<span className="text-amber-400 font-bold underline underline-offset-2">单击</span>放置（或按 ESC 取消）
+            </span>
+            <button
+              onClick={() => setMovingLocation(null)}
+              className="text-xs px-2.5 py-1 rounded-lg bg-amber-900/80 hover:bg-amber-800 text-amber-100 hover:text-white border border-amber-700/60 transition-colors font-medium ml-2"
+            >
+              取消移动 (ESC)
+            </button>
+          </div>
+        )}
+
         {/* Selected Location Card Popover on Map */}
         {activeLocationCard && (
           <LocationDetailCard
@@ -1908,17 +2301,25 @@ export default function MapView({ isActive = true }) {
               setActiveLocationCard(null);
               setSelectedMapLocationId(null);
             }}
-            onEdit={(loc) => {
-              setActiveLocationCard(null);
-              setCreatingLocationData(loc);
-            }}
-            onDelete={async (loc) => {
-              if (confirm(`确定要删除“${loc.name || loc.title}”地点吗？`)) {
-                await deleteEpochLocation(loc.epochId || currentEpoch?.id, loc.id);
-                setActiveLocationCard(null);
-                setSelectedMapLocationId(null);
-              }
-            }}
+            onEdit={handleEditLocation}
+            onMove={handleStartMove}
+            onDelete={handleDeleteLocation}
+            onOpenDatabase={handleOpenDatabaseForLocation}
+          />
+        )}
+
+        {/* Right-Click Context Menu */}
+        {contextMenu && (
+          <MapContextMenu
+            contextMenu={contextMenu}
+            selectedLocation={selectedLocation}
+            movingLocation={movingLocation}
+            onClose={() => setContextMenu(null)}
+            onCreate={handleCreateLocationAt}
+            onEdit={handleEditLocation}
+            onStartMove={handleStartMove}
+            onExecuteMove={handleExecuteMove}
+            onDelete={handleDeleteLocation}
             onOpenDatabase={handleOpenDatabaseForLocation}
           />
         )}
