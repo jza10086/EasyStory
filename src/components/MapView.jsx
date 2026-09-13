@@ -424,7 +424,6 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
 export default function MapView({ isActive = true }) {
   const mapData = useStoryStore((s) => s.mapData) || {};
   const setTimelineBounds = useStoryStore((s) => s.setTimelineBounds);
-  const setCurrentTime = useStoryStore((s) => s.setCurrentTime);
   const setCurrentEpochId = useStoryStore((s) => s.setCurrentEpochId);
   const selectEpoch = useStoryStore((s) => s.selectEpoch);
   const setPlateInfo = useStoryStore((s) => s.setPlateInfo);
@@ -466,20 +465,38 @@ export default function MapView({ isActive = true }) {
   const epochMax = currentEpoch?.timeRange?.[1] ?? totalMax;
 
   // Clamped bounds strictly restricted to current epoch
-  const savedLeft = Math.max(epochMin, Math.min(epochMax, timelineSettings.leftBound ?? epochMin));
-  const savedRight = Math.min(epochMax, Math.max(epochMin, timelineSettings.rightBound ?? epochMax));
+  const rawLeft = timelineSettings.leftBound ?? epochMin;
+  const rawRight = timelineSettings.rightBound ?? epochMax;
+  const boundedLeft = Math.max(epochMin, Math.min(epochMax, rawLeft));
+  const boundedRight = Math.max(boundedLeft, Math.min(epochMax, rawRight));
+  const savedLeft = boundedLeft;
+  const savedRight = boundedRight;
 
   // Local bounds for real-time smooth interaction at 60fps
   const [activeLeft, setActiveLeft] = useState(savedLeft);
   const [activeRight, setActiveRight] = useState(savedRight);
 
-  useEffect(() => {
-    setActiveLeft(savedLeft);
-  }, [savedLeft]);
+  // Refs to avoid stale closures in event listeners
+  const activeLeftRef = useRef(activeLeft);
+  const activeRightRef = useRef(activeRight);
+
+  // Dragging interaction state for DualHandleSlider on the Total Timeline (总线)
+  const timelineTrackRef = useRef(null);
+  const [draggingHandle, setDraggingHandle] = useState(null);
 
   useEffect(() => {
-    setActiveRight(savedRight);
-  }, [savedRight]);
+    if (!draggingHandle) {
+      setActiveLeft(savedLeft);
+      activeLeftRef.current = savedLeft;
+    }
+  }, [savedLeft, draggingHandle]);
+
+  useEffect(() => {
+    if (!draggingHandle) {
+      setActiveRight(savedRight);
+      activeRightRef.current = savedRight;
+    }
+  }, [savedRight, draggingHandle]);
 
   const clampedLeft = activeLeft;
   const clampedRight = activeRight;
@@ -499,34 +516,28 @@ export default function MapView({ isActive = true }) {
   const handleCommitLeft = () => {
     const num = parseInt(leftInputVal, 10);
     if (isNaN(num)) {
-      setLeftInputVal(String(activeLeft));
+      setLeftInputVal(String(activeLeftRef.current));
       return;
     }
-    const val = Math.max(epochMin, Math.min(activeRight, num));
+    const val = Math.max(epochMin, Math.min(activeRightRef.current, num));
     setLeftInputVal(String(val));
     setActiveLeft(val);
-    if (val !== activeLeft) {
-      setTimelineBounds(val, activeRight);
-    }
+    activeLeftRef.current = val;
+    setTimelineBounds(val, activeRightRef.current);
   };
 
   const handleCommitRight = () => {
     const num = parseInt(rightInputVal, 10);
     if (isNaN(num)) {
-      setRightInputVal(String(activeRight));
+      setRightInputVal(String(activeRightRef.current));
       return;
     }
-    const val = Math.max(activeLeft, Math.min(epochMax, num));
+    const val = Math.max(activeLeftRef.current, Math.min(epochMax, num));
     setRightInputVal(String(val));
     setActiveRight(val);
-    if (val !== activeRight) {
-      setTimelineBounds(activeLeft, val);
-    }
+    activeRightRef.current = val;
+    setTimelineBounds(activeLeftRef.current, val);
   };
-
-  // Dragging interaction state for DualHandleSlider on the Total Timeline (总线)
-  const timelineTrackRef = useRef(null);
-  const [draggingHandle, setDraggingHandle] = useState(null);
 
   // Percentages relative to the TOTAL timeline (总线)
   const leftPercent = Math.max(0, Math.min(100, ((clampedLeft - totalMin) / totalSpan) * 100));
@@ -544,20 +555,23 @@ export default function MapView({ isActive = true }) {
   const handlePointerMove = (handle, e) => {
     if (draggingHandle !== handle || !timelineTrackRef.current) return;
     const rect = timelineTrackRef.current.getBoundingClientRect();
+    if (rect.width <= 0) return;
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const year = Math.round(totalMin + ratio * totalSpan);
 
     if (handle === 'left') {
       // Must not go below epochMin (cannot slide outside current epoch) or above activeRight
-      const clamped = Math.max(epochMin, Math.min(activeRight, year));
-      if (clamped !== activeLeft) {
+      const clamped = Math.max(epochMin, Math.min(activeRightRef.current, year));
+      if (clamped !== activeLeftRef.current) {
+        activeLeftRef.current = clamped;
         setActiveLeft(clamped);
         setLeftInputVal(String(clamped));
       }
     } else if (handle === 'right') {
       // Must not go below activeLeft or above epochMax (cannot slide outside current epoch)
-      const clamped = Math.max(activeLeft, Math.min(epochMax, year));
-      if (clamped !== activeRight) {
+      const clamped = Math.max(activeLeftRef.current, Math.min(epochMax, year));
+      if (clamped !== activeRightRef.current) {
+        activeRightRef.current = clamped;
         setActiveRight(clamped);
         setRightInputVal(String(clamped));
       }
@@ -570,31 +584,34 @@ export default function MapView({ isActive = true }) {
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch {}
-      // Persist final bounds to store on release
-      setTimelineBounds(activeLeft, activeRight);
+      // Persist final bounds to store on release using ref
+      setTimelineBounds(activeLeftRef.current, activeRightRef.current);
     }
   };
 
   const handleTrackClick = (e) => {
     if (!timelineTrackRef.current || draggingHandle) return;
     const rect = timelineTrackRef.current.getBoundingClientRect();
+    if (rect.width <= 0) return;
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const clickedYear = Math.round(totalMin + ratio * totalSpan);
 
     const targetYear = Math.max(epochMin, Math.min(epochMax, clickedYear));
-    const distToLeft = Math.abs(targetYear - activeLeft);
-    const distToRight = Math.abs(targetYear - activeRight);
+    const distToLeft = Math.abs(targetYear - activeLeftRef.current);
+    const distToRight = Math.abs(targetYear - activeRightRef.current);
 
     if (distToLeft < distToRight) {
-      const clamped = Math.max(epochMin, Math.min(activeRight, targetYear));
+      const clamped = Math.max(epochMin, Math.min(activeRightRef.current, targetYear));
+      activeLeftRef.current = clamped;
       setActiveLeft(clamped);
       setLeftInputVal(String(clamped));
-      setTimelineBounds(clamped, activeRight);
+      setTimelineBounds(clamped, activeRightRef.current);
     } else {
-      const clamped = Math.max(activeLeft, Math.min(epochMax, targetYear));
+      const clamped = Math.max(activeLeftRef.current, Math.min(epochMax, targetYear));
+      activeRightRef.current = clamped;
       setActiveRight(clamped);
       setRightInputVal(String(clamped));
-      setTimelineBounds(activeLeft, clamped);
+      setTimelineBounds(activeLeftRef.current, clamped);
     }
   };
 
@@ -603,6 +620,8 @@ export default function MapView({ isActive = true }) {
     const epEnd = ep.timeRange?.[1] ?? 2100;
     setActiveLeft(epStart);
     setActiveRight(epEnd);
+    activeLeftRef.current = epStart;
+    activeRightRef.current = epEnd;
     setLeftInputVal(String(epStart));
     setRightInputVal(String(epEnd));
     if (selectEpoch) {
@@ -610,9 +629,6 @@ export default function MapView({ isActive = true }) {
     } else {
       setCurrentEpochId(ep.id);
       setTimelineBounds(epStart, epEnd);
-    }
-    if (epStart !== undefined) {
-      setCurrentTime(epStart);
     }
   };
 
@@ -1448,6 +1464,8 @@ export default function MapView({ isActive = true }) {
                 onClick={() => {
                   setActiveLeft(epochMin);
                   setActiveRight(epochMax);
+                  activeLeftRef.current = epochMin;
+                  activeRightRef.current = epochMax;
                   setLeftInputVal(String(epochMin));
                   setRightInputVal(String(epochMax));
                   setTimelineBounds(epochMin, epochMax);

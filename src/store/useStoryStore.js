@@ -545,17 +545,7 @@ export const useStoryStore = create((set, get) => ({
       ...(current.timelineSettings || { minYear: -1000, maxYear: 2100, leftBound: -500, rightBound: 2080 }),
       currentTime
     };
-    // Auto detect epoch if time falls into one
-    let targetEpochId = current.currentEpochId;
-    if (current.epochs && current.epochs.length > 0) {
-      const matched = current.epochs.find(
-        (ep) => Array.isArray(ep.timeRange) && currentTime >= ep.timeRange[0] && currentTime <= ep.timeRange[1]
-      );
-      if (matched) {
-        targetEpochId = matched.id;
-      }
-    }
-    await get().saveMapData({ ...current, timelineSettings, currentEpochId: targetEpochId });
+    await get().saveMapData({ ...current, timelineSettings });
   },
 
   setCurrentEpochId: async (epochId) => {
