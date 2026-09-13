@@ -563,6 +563,25 @@ export const useStoryStore = create((set, get) => ({
     await get().saveMapData({ ...current, currentEpochId: epochId });
   },
 
+  selectEpoch: async (epochId, leftBound, rightBound) => {
+    const current = get().mapData || {};
+    const epochs = current.epochs || [];
+    const target = epochs.find((ep) => ep.id === epochId);
+    const start = leftBound !== undefined ? leftBound : (target?.timeRange?.[0] ?? -1000);
+    const end = rightBound !== undefined ? rightBound : (target?.timeRange?.[1] ?? 2100);
+    const timelineSettings = {
+      ...(current.timelineSettings || { minYear: -1000, maxYear: 2100 }),
+      leftBound: start,
+      rightBound: end,
+      currentTime: start
+    };
+    await get().saveMapData({
+      ...current,
+      currentEpochId: epochId,
+      timelineSettings
+    });
+  },
+
   setRegionColor: async (epochId, regionKey, color) => {
     const current = get().mapData || {};
     const epochs = (current.epochs || []).map((ep) => {

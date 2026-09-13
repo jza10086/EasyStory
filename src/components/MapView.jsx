@@ -18,31 +18,13 @@ import {
 } from '../services/geoPreloader';
 import {
   Compass,
-  MapPin,
-  Castle,
-  Anchor,
-  Shield,
-  Skull,
-  Sparkles,
-  Mountain,
-  Flame,
-  Plus,
-  Trash2,
-  Edit2,
-  X,
-  Search,
-  Calendar,
   Clock,
-  Flag,
   ChevronDown,
   ChevronUp,
-  Layers,
   Palette,
-  Eye,
   RotateCcw,
-  Sliders,
-  History,
-  Maximize2
+  Edit2,
+  X
 } from 'lucide-react';
 
 const COLOR_PRESETS = [
@@ -441,22 +423,11 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
 
 export default function MapView({ isActive = true }) {
   const mapData = useStoryStore((s) => s.mapData) || {};
-  const saveMapData = useStoryStore((s) => s.saveMapData);
   const setTimelineBounds = useStoryStore((s) => s.setTimelineBounds);
   const setCurrentTime = useStoryStore((s) => s.setCurrentTime);
   const setCurrentEpochId = useStoryStore((s) => s.setCurrentEpochId);
-  const setRegionColor = useStoryStore((s) => s.setRegionColor);
+  const selectEpoch = useStoryStore((s) => s.selectEpoch);
   const setPlateInfo = useStoryStore((s) => s.setPlateInfo);
-  const addMapLocation = useStoryStore((s) => s.addMapLocation);
-  const updateMapLocation = useStoryStore((s) => s.updateMapLocation);
-  const deleteMapLocation = useStoryStore((s) => s.deleteMapLocation);
-  const addTimelineEvent = useStoryStore((s) => s.addTimelineEvent);
-  const updateTimelineEvent = useStoryStore((s) => s.updateTimelineEvent);
-  const deleteTimelineEvent = useStoryStore((s) => s.deleteTimelineEvent);
-  const selectedMapLocationId = useStoryStore((s) => s.selectedMapLocationId);
-  const setSelectedMapLocationId = useStoryStore((s) => s.setSelectedMapLocationId);
-  const selectedTimelineEventId = useStoryStore((s) => s.selectedTimelineEventId);
-  const setSelectedTimelineEventId = useStoryStore((s) => s.setSelectedTimelineEventId);
   const setActiveWorkspace = useStoryStore((s) => s.setActiveWorkspace);
 
   const timelineSettings = mapData.timelineSettings || {
@@ -468,8 +439,19 @@ export default function MapView({ isActive = true }) {
   };
   const currentEpochId = mapData.currentEpochId || 'epoch-modern';
   const epochs = mapData.epochs || [];
-  const locations = mapData.locations || [];
-  const timeline = mapData.timeline || [];
+
+  // Total timeline extent across all epochs (总线范围)
+  const totalMin = useMemo(() => {
+    if (!epochs.length) return -1000;
+    return Math.min(...epochs.map((ep) => ep.timeRange?.[0] ?? -1000));
+  }, [epochs]);
+
+  const totalMax = useMemo(() => {
+    if (!epochs.length) return 2100;
+    return Math.max(...epochs.map((ep) => ep.timeRange?.[1] ?? 2100));
+  }, [epochs]);
+
+  const totalSpan = Math.max(1, totalMax - totalMin);
 
   const currentEpoch = useMemo(() => {
     return epochs.find((ep) => ep.id === currentEpochId) || epochs[0] || null;
@@ -480,8 +462,8 @@ export default function MapView({ isActive = true }) {
     currentEpochRef.current = currentEpoch;
   }, [currentEpoch]);
 
-  const epochMin = currentEpoch?.timeRange?.[0] ?? -1000;
-  const epochMax = currentEpoch?.timeRange?.[1] ?? 2100;
+  const epochMin = currentEpoch?.timeRange?.[0] ?? totalMin;
+  const epochMax = currentEpoch?.timeRange?.[1] ?? totalMax;
 
   // Clamped bounds strictly restricted to current epoch
   const savedLeft = Math.max(epochMin, Math.min(epochMax, timelineSettings.leftBound ?? epochMin));
@@ -542,13 +524,15 @@ export default function MapView({ isActive = true }) {
     }
   };
 
-  // Dragging interaction state for DualHandleSlider
+  // Dragging interaction state for DualHandleSlider on the Total Timeline (总线)
   const timelineTrackRef = useRef(null);
   const [draggingHandle, setDraggingHandle] = useState(null);
 
-  const span = Math.max(1, epochMax - epochMin);
-  const leftPercent = Math.max(0, Math.min(100, ((clampedLeft - epochMin) / span) * 100));
-  const rightPercent = Math.max(0, Math.min(100, ((clampedRight - epochMin) / span) * 100));
+  // Percentages relative to the TOTAL timeline (总线)
+  const leftPercent = Math.max(0, Math.min(100, ((clampedLeft - totalMin) / totalSpan) * 100));
+  const rightPercent = Math.max(0, Math.min(100, ((clampedRight - totalMin) / totalSpan) * 100));
+  const epochLeftPercent = Math.max(0, Math.min(100, ((epochMin - totalMin) / totalSpan) * 100));
+  const epochRightPercent = Math.max(0, Math.min(100, ((epochMax - totalMin) / totalSpan) * 100));
 
   const handlePointerDown = (handle, e) => {
     e.preventDefault();
@@ -561,15 +545,17 @@ export default function MapView({ isActive = true }) {
     if (draggingHandle !== handle || !timelineTrackRef.current) return;
     const rect = timelineTrackRef.current.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const year = Math.round(epochMin + ratio * span);
+    const year = Math.round(totalMin + ratio * totalSpan);
 
     if (handle === 'left') {
+      // Must not go below epochMin (cannot slide outside current epoch) or above activeRight
       const clamped = Math.max(epochMin, Math.min(activeRight, year));
       if (clamped !== activeLeft) {
         setActiveLeft(clamped);
         setLeftInputVal(String(clamped));
       }
     } else if (handle === 'right') {
+      // Must not go below activeLeft or above epochMax (cannot slide outside current epoch)
       const clamped = Math.max(activeLeft, Math.min(epochMax, year));
       if (clamped !== activeRight) {
         setActiveRight(clamped);
@@ -593,18 +579,19 @@ export default function MapView({ isActive = true }) {
     if (!timelineTrackRef.current || draggingHandle) return;
     const rect = timelineTrackRef.current.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const clickedYear = Math.round(epochMin + ratio * span);
+    const clickedYear = Math.round(totalMin + ratio * totalSpan);
 
-    const distToLeft = Math.abs(clickedYear - activeLeft);
-    const distToRight = Math.abs(clickedYear - activeRight);
+    const targetYear = Math.max(epochMin, Math.min(epochMax, clickedYear));
+    const distToLeft = Math.abs(targetYear - activeLeft);
+    const distToRight = Math.abs(targetYear - activeRight);
 
     if (distToLeft < distToRight) {
-      const clamped = Math.max(epochMin, Math.min(activeRight, clickedYear));
+      const clamped = Math.max(epochMin, Math.min(activeRight, targetYear));
       setActiveLeft(clamped);
       setLeftInputVal(String(clamped));
       setTimelineBounds(clamped, activeRight);
     } else {
-      const clamped = Math.max(activeLeft, Math.min(epochMax, clickedYear));
+      const clamped = Math.max(activeLeft, Math.min(epochMax, targetYear));
       setActiveRight(clamped);
       setRightInputVal(String(clamped));
       setTimelineBounds(activeLeft, clamped);
@@ -612,14 +599,18 @@ export default function MapView({ isActive = true }) {
   };
 
   const handleSelectEpoch = (ep) => {
-    setCurrentEpochId(ep.id);
     const epStart = ep.timeRange?.[0] ?? -1000;
     const epEnd = ep.timeRange?.[1] ?? 2100;
     setActiveLeft(epStart);
     setActiveRight(epEnd);
     setLeftInputVal(String(epStart));
     setRightInputVal(String(epEnd));
-    setTimelineBounds(epStart, epEnd);
+    if (selectEpoch) {
+      selectEpoch(ep.id, epStart, epEnd);
+    } else {
+      setCurrentEpochId(ep.id);
+      setTimelineBounds(epStart, epEnd);
+    }
     if (epStart !== undefined) {
       setCurrentTime(epStart);
     }
@@ -628,13 +619,6 @@ export default function MapView({ isActive = true }) {
   // UI state
   const [zoomLevel, setZoomLevel] = useState(1.8);
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
-  const [isAddingLocation, setIsAddingLocation] = useState(false);
-  const isAddingLocationRef = useRef(isAddingLocation);
-  isAddingLocationRef.current = isAddingLocation;
-
-  const [editingLocation, setEditingLocation] = useState(null);
-  const [editingEvent, setEditingEvent] = useState(null);
-  const [searchKeyword, setSearchKeyword] = useState('');
   const [editingPlateTarget, setEditingPlateTarget] = useState(null);
 
   // Singleton hover card
@@ -664,7 +648,6 @@ export default function MapView({ isActive = true }) {
 
   const showHoverPlate = useCallback(
     (data, clientX, clientY) => {
-      if (isAddingLocationRef.current) return;
       setHoveredPlate({
         ...data,
         visible: true,
@@ -686,7 +669,6 @@ export default function MapView({ isActive = true }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const isMapLoadedRef = useRef(false);
-  const markersRef = useRef([]);
   const zoomRafRef = useRef(null);
 
   // Data states from preloader
@@ -778,38 +760,6 @@ export default function MapView({ isActive = true }) {
       }, 50);
     }
   }, [isActive]);
-
-  const filteredEvents = useMemo(() => {
-    return timeline.filter((evt) => {
-      const yr = evt.year ?? 0;
-      return yr >= clampedLeft && yr <= clampedRight;
-    });
-  }, [timeline, clampedLeft, clampedRight]);
-
-  const filteredLocations = useMemo(() => {
-    return locations.filter((loc) => {
-      const yr = loc.year ?? 2024;
-      if (yr < clampedLeft || yr > clampedRight) return false;
-      if (searchKeyword.trim()) {
-        const kw = searchKeyword.toLowerCase();
-        return (
-          (loc.name || '').toLowerCase().includes(kw) ||
-          (loc.region || '').toLowerCase().includes(kw) ||
-          (loc.country || '').toLowerCase().includes(kw)
-        );
-      }
-      return true;
-    });
-  }, [locations, clampedLeft, clampedRight, searchKeyword]);
-
-  const selectedLocation = useMemo(() => {
-    return locations.find((l) => l.id === selectedMapLocationId) || null;
-  }, [locations, selectedMapLocationId]);
-
-  const locationTimelineEvents = useMemo(() => {
-    if (!selectedMapLocationId) return [];
-    return filteredEvents.filter((t) => t.locationId === selectedMapLocationId);
-  }, [filteredEvents, selectedMapLocationId]);
 
   const currentLOD = useMemo(() => {
     if (zoomLevel < 2.5) return 1;
@@ -1150,7 +1100,6 @@ export default function MapView({ isActive = true }) {
 
       interactiveLayers.forEach((layerId) => {
         map.on('mousemove', layerId, (e) => {
-          if (isAddingLocationRef.current) return;
           if (!e.features || !e.features.length) return;
 
           const z = map.getZoom();
@@ -1203,7 +1152,7 @@ export default function MapView({ isActive = true }) {
           if (map.getLayer(hoverLayer)) {
             map.setFilter(hoverLayer, ['==', ['get', 'id'], '']);
           }
-          map.getCanvas().style.cursor = isAddingLocationRef.current ? 'crosshair' : '';
+          map.getCanvas().style.cursor = '';
           hideHoverPlateRef.current?.();
         });
 
@@ -1214,7 +1163,6 @@ export default function MapView({ isActive = true }) {
           if (layerId === 'provinces-fill' && z < 4.5) return;
 
           if (e.originalEvent) e.originalEvent._plateClicked = true;
-          if (isAddingLocationRef.current) return;
           if (!e.features || !e.features.length) return;
 
           const feat = e.features[0];
@@ -1257,30 +1205,11 @@ export default function MapView({ isActive = true }) {
       }, 50);
     });
 
-    // Map-level click (for pin creation or deselection)
+    // Map-level click (for plate editing target deselection)
     map.on('click', (e) => {
       if (e.originalEvent?._plateClicked) return;
       hideHoverPlateRef.current?.();
-
-      if (isAddingLocationRef.current) {
-        let { lng, lat } = e.lngLat;
-        const normalizedLng = (((lng + 180) % 360 + 360) % 360) - 180;
-        setEditingLocation({
-          name: '',
-          lat: Number(lat.toFixed(4)),
-          lng: Number(normalizedLng.toFixed(4)),
-          type: 'city',
-          country: '自由地区',
-          region: '未分区',
-          year: timelineSettings.currentTime || 2024,
-          description: '',
-          icon: 'Castle',
-          color: '#38bdf8'
-        });
-        setIsAddingLocation(false);
-      } else {
-        setSelectedMapLocationId(null);
-      }
+      setEditingPlateTarget(null);
     });
 
     map.on('zoomstart', () => {
@@ -1301,8 +1230,6 @@ export default function MapView({ isActive = true }) {
 
     return () => {
       if (zoomRafRef.current) cancelAnimationFrame(zoomRafRef.current);
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
       map.remove();
       mapInstanceRef.current = null;
       isMapLoadedRef.current = false;
@@ -1335,103 +1262,6 @@ export default function MapView({ isActive = true }) {
       map.getSource('province-labels').setData(labelsToGeoJSON(pLabels, currentEpoch?.platesData));
     }
   }, [currentEpoch, countryLabels, provinceLabels]);
-
-  // Sync interactive location markers
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = [];
-
-    filteredLocations.forEach((loc) => {
-      const isSelected = selectedMapLocationId === loc.id;
-      const pinColor = loc.color || '#38bdf8';
-      const eventCount = filteredEvents.filter((t) => t.locationId === loc.id).length;
-
-      const el = document.createElement('div');
-      el.className = 'relative group cursor-pointer flex flex-col items-center';
-      el.innerHTML = `
-        <div class="absolute -inset-2 rounded-full opacity-40 ${
-          isSelected ? 'animate-ping' : 'group-hover:animate-ping'
-        }" style="background-color: ${pinColor};"></div>
-
-        <div class="relative w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-all shadow-xl ${
-          isSelected ? 'border-white scale-110' : 'border-slate-800'
-        }" style="background-color: ${isSelected ? pinColor : '#0f172a'}; color: ${
-        isSelected ? '#ffffff' : pinColor
-      }; box-shadow: 0 0 15px ${pinColor}88;">
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-          </svg>
-          ${
-            eventCount > 0
-              ? `<span class="absolute -top-1.5 -right-1.5 px-1 min-w-4 h-4 text-[9px] font-bold rounded-full bg-amber-500 text-slate-950 flex items-center justify-center border border-slate-900">${eventCount}</span>`
-              : ''
-          }
-        </div>
-
-        <div class="mt-1 px-2 py-0.5 rounded-md text-[10px] font-semibold whitespace-nowrap border backdrop-blur flex items-center gap-1 shadow-lg ${
-          isSelected
-            ? 'bg-slate-900/95 border-white text-white'
-            : 'bg-slate-900/80 border-slate-700/80 text-slate-200'
-        }">
-          <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${pinColor};"></span>
-          <span>${loc.name}</span>
-        </div>
-      `;
-
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        setSelectedMapLocationId(isSelected ? null : loc.id);
-        setEditingPlateTarget(null);
-      });
-
-      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-        .setLngLat([loc.lng, loc.lat])
-        .addTo(map);
-
-      markersRef.current.push(marker);
-    });
-  }, [filteredLocations, selectedMapLocationId, filteredEvents]);
-
-  const flyToLocation = useCallback((lat, lng, zoom = 6) => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-    map.flyTo({
-      center: [lng, lat],
-      zoom,
-      speed: 1.2
-    });
-  }, []);
-
-  const handleSaveLocation = async (e) => {
-    e.preventDefault();
-    if (!editingLocation.name.trim()) {
-      alert('请输入地点名称');
-      return;
-    }
-    if (editingLocation.id) {
-      await updateMapLocation(editingLocation.id, editingLocation);
-    } else {
-      await addMapLocation(editingLocation);
-    }
-    setEditingLocation(null);
-  };
-
-  const handleSaveTimelineEvent = async (e) => {
-    e.preventDefault();
-    if (!editingEvent.title.trim()) {
-      alert('请输入事件标题');
-      return;
-    }
-    if (editingEvent.id) {
-      await updateTimelineEvent(editingEvent.id, editingEvent);
-    } else {
-      await addTimelineEvent(editingEvent);
-    }
-    setEditingEvent(null);
-  };
 
   const handleSavePlate = async ({ plateId, name, color, description, applyAllEpochs }) => {
     if (!editingPlateTarget) return;
@@ -1503,24 +1333,8 @@ export default function MapView({ isActive = true }) {
           </span>
         </div>
 
-        {/* Right Tools: Add Pin, Add Event, Toggle Timeline, Return */}
+        {/* Right Tools: Toggle Timeline, Return */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setIsAddingLocation(!isAddingLocation);
-              setSelectedMapLocationId(null);
-            }}
-            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg shadow-md transition-all ${
-              isAddingLocation
-                ? 'bg-amber-600 hover:bg-amber-500 text-white ring-2 ring-amber-400 shadow-amber-600/30'
-                : 'bg-sky-600 hover:bg-sky-500 text-white shadow-sky-600/20'
-            }`}
-            title="点击地图任意位置即可在真实经纬度精准插旗标注"
-          >
-            <MapPin className="w-3.5 h-3.5" />
-            <span>{isAddingLocation ? '点击地图任意处插旗...' : '新增标注点'}</span>
-          </button>
-
           <button
             onClick={() => setIsTimelineOpen(!isTimelineOpen)}
             className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all ${
@@ -1528,10 +1342,10 @@ export default function MapView({ isActive = true }) {
                 ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
                 : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
             }`}
-            title="展开或折叠时空双边界时间轴"
+            title="展开或折叠时空总线时间轴"
           >
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span className="font-semibold">{currentEpoch?.name || '时空时间轴'}</span>
+            <span className="font-semibold">{currentEpoch?.name || '时空总线时间轴'}</span>
             <span className="text-[10px] font-mono text-slate-400 hidden sm:inline">
               ({clampedLeft} ~ {clampedRight}年)
             </span>
@@ -1553,27 +1367,11 @@ export default function MapView({ isActive = true }) {
         </div>
       </header>
 
-      {/* Adding Mode Notification */}
-      {isAddingLocation && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-amber-500 text-slate-950 font-bold px-4 py-1.5 rounded-full text-xs shadow-xl shadow-amber-500/30 flex items-center gap-2 animate-bounce">
-          <MapPin className="w-4 h-4" />
-          <span>请在世界地图任意位置单击，设置经纬度标注点</span>
-          <button
-            onClick={() => setIsAddingLocation(false)}
-            className="ml-2 hover:bg-amber-600/50 rounded-full p-0.5"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* Main Map Body: MapLibre GL Canvas + Inspector Drawer */}
+      {/* Main Map Body: MapLibre GL Canvas */}
       <div className="flex-1 flex overflow-hidden relative">
         <div
           ref={mapContainerRef}
-          className={`flex-1 w-full h-full ${
-            isAddingLocation ? 'cursor-crosshair' : ''
-          }`}
+          className="flex-1 w-full h-full"
           style={{
             zIndex: 1,
             background: 'radial-gradient(ellipse at 50% 50%, #0c1c3d 0%, #07122b 60%, #020616 100%)'
@@ -1581,142 +1379,6 @@ export default function MapView({ isActive = true }) {
         />
 
         {/* Selected Location Inspector Drawer */}
-        {selectedLocation && (
-          <aside className="w-80 border-l border-slate-800 bg-slate-900/95 backdrop-blur-md flex flex-col shrink-0 z-30 shadow-2xl animate-fadeIn">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2 truncate">
-                <div
-                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow"
-                  style={{
-                    backgroundColor: `${selectedLocation.color || '#38bdf8'}22`,
-                    color: selectedLocation.color || '#38bdf8'
-                  }}
-                >
-                  <MapPin className="w-4 h-4" />
-                </div>
-                <div className="truncate">
-                  <h3 className="text-xs font-bold text-white truncate">
-                    {selectedLocation.name}
-                  </h3>
-                  <p className="text-[10px] text-slate-400">
-                    {selectedLocation.country || ''} · {selectedLocation.region || '未分区'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setEditingLocation(selectedLocation)}
-                  className="p-1 text-slate-400 hover:text-sky-400 hover:bg-slate-800 rounded transition-colors"
-                  title="编辑标注点"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={async () => {
-                    if (confirm(`确定要删除标注点“${selectedLocation.name}”吗？`)) {
-                      await deleteMapLocation(selectedLocation.id);
-                    }
-                  }}
-                  className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors"
-                  title="删除标注点"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setSelectedMapLocationId(null)}
-                  className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between font-mono text-[11px] text-slate-400">
-                <span className="flex items-center gap-1 text-sky-400">
-                  <Compass className="w-3.5 h-3.5" />
-                  真实经纬度:
-                </span>
-                <span className="text-slate-200">
-                  {selectedLocation.lat?.toFixed(2)}°N, {selectedLocation.lng?.toFixed(2)}°E
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between bg-slate-950/40 p-2.5 rounded-xl border border-slate-800">
-                <span className="text-slate-400">标定时期 / 年份:</span>
-                <span className="font-mono text-amber-300 font-bold">
-                  {selectedLocation.year} 年
-                </span>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-semibold text-slate-400">设定与背景简介</label>
-                <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3 text-slate-300 text-xs leading-relaxed whitespace-pre-wrap">
-                  {selectedLocation.description || '暂无详细设定描述。点击上方编辑按钮补充。'}
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-slate-800">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-amber-400" />
-                    发生在此处的纪事 ({locationTimelineEvents.length})
-                  </span>
-                  <button
-                    onClick={() =>
-                      setEditingEvent({
-                        year: selectedLocation.year || 2024,
-                        timeLabel: `${selectedLocation.year || 2024}年`,
-                        title: '',
-                        epochId: currentEpochId,
-                        description: '',
-                        locationId: selectedLocation.id,
-                        tag: '现场事件'
-                      })
-                    }
-                    className="text-[10px] text-sky-400 hover:underline flex items-center gap-0.5"
-                  >
-                    <Plus className="w-3 h-3" /> 记录事件
-                  </button>
-                </div>
-
-                {locationTimelineEvents.length === 0 ? (
-                  <p className="text-[11px] text-slate-400 py-3 text-center bg-slate-950/40 rounded-xl border border-slate-800/60">
-                    当前时间窗口内该地点无关联事件
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {locationTimelineEvents.map((evt) => (
-                      <div
-                        key={evt.id}
-                        onClick={() => setSelectedTimelineEventId(evt.id)}
-                        className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                          selectedTimelineEventId === evt.id
-                            ? 'bg-sky-950/50 border-sky-500 text-white shadow'
-                            : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/60'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-amber-300">
-                            {evt.timeLabel || `${evt.year}年`}
-                          </span>
-                          <span className="text-[10px] text-slate-400">{evt.tag}</span>
-                        </div>
-                        <h4 className="font-semibold text-xs text-slate-100">{evt.title}</h4>
-                        {evt.description && (
-                          <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">
-                            {evt.description}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </aside>
-        )}
       </div>
 
       <PlateHoverCard plate={hoveredPlate} cardRef={plateHoverCardRef} />
@@ -1730,15 +1392,15 @@ export default function MapView({ isActive = true }) {
         />
       )}
 
-      {/* Dual-Boundary Range Interactive Timeline Bar */}
+      {/* Total Timeline Interactive Bar (总线时间轴) */}
       {isTimelineOpen && (
-        <div className="h-56 border-t border-slate-800 bg-slate-900/95 backdrop-blur-md flex flex-col shrink-0 z-20 shadow-2xl animate-fadeIn">
-          {/* Header Bar: Epoch Title + Exact Numeric Inputs + Reset + Add Event */}
-          <div className="h-9 border-b border-slate-800/80 px-4 flex items-center justify-between text-xs shrink-0 bg-slate-950/40">
+        <div className="border-t border-slate-800 bg-slate-900/95 backdrop-blur-md flex flex-col shrink-0 z-20 shadow-2xl animate-fadeIn">
+          {/* Header Bar: Epoch Title + Exact Numeric Inputs + Reset */}
+          <div className="h-9 border-b border-slate-800/80 px-6 flex items-center justify-between text-xs shrink-0 bg-slate-950/40">
             <div className="flex items-center gap-2.5">
               <div className="flex items-center gap-1.5 font-bold text-slate-200">
                 <Clock className="w-3.5 h-3.5 text-amber-400" />
-                <span>时空时间轴</span>
+                <span>时空总线时间轴</span>
               </div>
 
               <div className="h-3.5 w-[1px] bg-slate-800" />
@@ -1794,61 +1456,42 @@ export default function MapView({ isActive = true }) {
                 title="将左右控制柄重置为当前时期的起止完整范围"
               >
                 <RotateCcw className="w-3 h-3" />
-                <span>整期全选</span>
+                <span>重置当前时期</span>
               </button>
-
-              <span className="text-slate-400 text-[10px] hidden md:inline">
-                (跨度 {clampedRight - clampedLeft} 年 · 呈现 {filteredEvents.length} 个事件 / {filteredLocations.length} 个据点)
-              </span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() =>
-                  setEditingEvent({
-                    year: clampedLeft,
-                    timeLabel: `${clampedLeft}年`,
-                    title: '',
-                    epochId: currentEpochId,
-                    description: '',
-                    locationId: selectedMapLocationId || '',
-                    tag: '新主线'
-                  })
-                }
-                className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 font-medium hover:underline bg-sky-500/10 hover:bg-sky-500/20 px-2.5 py-1 rounded-lg border border-sky-500/30 transition-all"
-              >
-                <Plus className="w-3 h-3" /> 添加时间点事件
-              </button>
+            <div className="text-[11px] text-slate-400 font-mono hidden sm:inline">
+              总线跨度: <span className="text-slate-200 font-bold">{totalMin} ~ {totalMax}年</span> ({totalSpan}年)
             </div>
           </div>
 
-          {/* Section 1: Contiguous Proportional Epoch Segmented Bar */}
-          <div className="px-4 py-1.5 bg-slate-950/70 border-b border-slate-800/60">
-            <div className="w-full flex items-stretch border border-slate-700/80 rounded-xl overflow-hidden divide-x divide-slate-800 bg-slate-900/60 shadow-inner">
+          {/* Section 1: Contiguous Proportional Epoch Segmented Bar (Aligned 1:1 with timeline below) */}
+          <div className="px-6 py-2 bg-slate-950/70 border-b border-slate-800/60">
+            <div className="w-full flex items-stretch border border-slate-700/80 rounded-xl overflow-hidden divide-x divide-slate-800 bg-slate-900/60 shadow-inner h-11">
               {epochs.map((ep) => {
                 const isCurrent = ep.id === currentEpochId;
                 const epStart = ep.timeRange?.[0] ?? -1000;
                 const epEnd = ep.timeRange?.[1] ?? 2100;
-                const duration = Math.max(50, epEnd - epStart);
+                const duration = Math.max(0, epEnd - epStart);
+                const widthPercent = totalSpan > 0 ? (duration / totalSpan) * 100 : 100 / epochs.length;
 
                 return (
                   <button
                     key={ep.id}
                     onClick={() => handleSelectEpoch(ep)}
                     style={{
-                      flex: `${Math.max(duration, 180)} 1 0%`,
-                      minWidth: '130px'
+                      width: `${widthPercent}%`
                     }}
-                    className={`relative px-3 py-1.5 text-left transition-all group flex flex-col justify-center select-none ${
+                    className={`relative px-3 py-1 text-left transition-all group flex flex-col justify-center select-none overflow-hidden shrink-0 ${
                       isCurrent
-                        ? 'bg-gradient-to-r from-amber-500/20 to-amber-600/10 text-white shadow-md'
+                        ? 'bg-gradient-to-r from-amber-500/25 via-amber-500/15 to-amber-600/20 text-white shadow-md'
                         : 'bg-slate-900/40 text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
                     }`}
                     title={`${ep.name}\n${epStart}年 ~ ${epEnd}年 (时长: ${duration}年)\n${ep.description || ''}`}
                   >
                     {/* Active top line highlight */}
                     {isCurrent && (
-                      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500" />
+                      <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500" />
                     )}
                     <div className="flex items-center justify-between gap-1">
                       <span className={`text-xs font-bold truncate ${isCurrent ? 'text-amber-300 font-extrabold' : 'text-slate-300 group-hover:text-white'}`}>
@@ -1858,7 +1501,7 @@ export default function MapView({ isActive = true }) {
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
                       )}
                     </div>
-                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-0.5">
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-0.5 truncate">
                       <span>{epStart} ~ {epEnd}</span>
                       <span className="opacity-75">({duration}年)</span>
                     </div>
@@ -1868,36 +1511,51 @@ export default function MapView({ isActive = true }) {
             </div>
           </div>
 
-          {/* Section 2: Custom Dual-Handle Range Slider within Current Epoch */}
-          <div className="px-6 py-2 border-b border-slate-800/60 bg-slate-950/90 flex flex-col gap-0.5">
+          {/* Section 2: Total Timeline Track with Epoch Boundary Constraints */}
+          <div className="px-6 py-2.5 bg-slate-950/90 flex flex-col gap-1">
             <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 select-none">
-              <span className="flex items-center gap-1 text-cyan-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                时期起点: {epochMin} 年
+              <span className="flex items-center gap-1.5 text-slate-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                总线起点: {totalMin} 年
               </span>
-              <span className="text-slate-400">
-                已选区间: <span className="text-cyan-300 font-bold font-mono">{clampedLeft}年</span>
+              <span className="text-slate-300 truncate">
+                当前选中时期: <span className="text-amber-300 font-bold">{currentEpoch?.name || '未知时期'}</span>
+                <span className="text-slate-500 mx-1.5">|</span>
+                时期边界: <span className="text-slate-300 font-mono">{epochMin} ~ {epochMax}年</span>
+                <span className="text-slate-500 mx-1.5">|</span>
+                控制区间: <span className="text-cyan-300 font-bold font-mono">{clampedLeft}年</span>
                 <span className="text-slate-500 mx-1">~</span>
                 <span className="text-yellow-300 font-bold font-mono">{clampedRight}年</span>
+                <span className="text-slate-400 ml-1">({clampedRight - clampedLeft}年)</span>
               </span>
-              <span className="flex items-center gap-1 text-yellow-400">
-                时期终点: {epochMax} 年
-                <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+              <span className="flex items-center gap-1.5 text-slate-400">
+                总线终点: {totalMax} 年
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
               </span>
             </div>
 
             <div
               ref={timelineTrackRef}
               onClick={handleTrackClick}
-              className="relative w-full h-7 flex items-center cursor-pointer select-none py-2"
-              title="拖动控制柄或点击轨道调整范围"
+              className="relative w-full h-8 flex items-center cursor-pointer select-none py-2"
+              title="拖动控制柄或点击轨道调整范围 (限制在当前时期内)"
             >
-              {/* Inactive Base Track */}
-              <div className="absolute w-full h-2 bg-slate-800 rounded-full border border-slate-700/60" />
+              {/* Total Inactive Base Track */}
+              <div className="absolute w-full h-2 bg-slate-800/80 rounded-full border border-slate-700/60" />
 
-              {/* Active Range Gradient Highlight (Cyan to Yellow) */}
+              {/* Current Epoch Allowable Range Region Highlight */}
               <div
-                className="absolute h-2 bg-gradient-to-r from-cyan-400 via-sky-400 to-yellow-400 rounded-full shadow-[0_0_8px_rgba(6,182,212,0.4)]"
+                className="absolute h-2 bg-slate-700/60 rounded-full border border-slate-600/40"
+                style={{
+                  left: `${epochLeftPercent}%`,
+                  width: `${Math.max(0, epochRightPercent - epochLeftPercent)}%`
+                }}
+                title={`当前时期允许范围: ${epochMin} ~ ${epochMax}年`}
+              />
+
+              {/* Active Selected Range Gradient Highlight (Cyan to Yellow) */}
+              <div
+                className="absolute h-2 bg-gradient-to-r from-cyan-400 via-sky-400 to-yellow-400 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.4)]"
                 style={{
                   left: `${leftPercent}%`,
                   width: `${Math.max(0, rightPercent - leftPercent)}%`
@@ -1916,13 +1574,13 @@ export default function MapView({ isActive = true }) {
                 onPointerMove={(e) => handlePointerMove('left', e)}
                 onPointerUp={(e) => handlePointerUp('left', e)}
                 style={{ left: `${leftPercent}%` }}
-                className="absolute -translate-x-1/2 w-5 h-5 rounded-full bg-cyan-400 border-2 border-slate-950 shadow-lg shadow-cyan-500/50 cursor-ew-resize flex items-center justify-center hover:scale-125 active:scale-130 transition-transform z-10 touch-none ring-2 ring-cyan-400/40"
-                title={`左边界控制柄: ${clampedLeft}年 (拖拽调节)`}
+                className="absolute -translate-x-1/2 w-5 h-5 rounded-full bg-cyan-400 border-2 border-slate-950 shadow-lg shadow-cyan-500/50 cursor-ew-resize flex items-center justify-center hover:scale-125 active:scale-130 transition-transform z-10 touch-none ring-2 ring-cyan-400/50"
+                title={`左边界控制柄: ${clampedLeft}年 (当前时期下限: ${epochMin}年)`}
               >
                 <div className="w-1.5 h-1.5 rounded-full bg-slate-950" />
               </div>
 
-              {/* Right Handle (Yellow Capsule/Circle with Dark Center) */}
+              {/* Right Handle (Yellow Circle with Dark Center) */}
               <div
                 role="slider"
                 aria-label="时间轴右边界控制柄"
@@ -1934,397 +1592,13 @@ export default function MapView({ isActive = true }) {
                 onPointerMove={(e) => handlePointerMove('right', e)}
                 onPointerUp={(e) => handlePointerUp('right', e)}
                 style={{ left: `${rightPercent}%` }}
-                className="absolute -translate-x-1/2 w-5 h-5 rounded-full bg-yellow-400 border-2 border-slate-950 shadow-lg shadow-yellow-500/50 cursor-ew-resize flex items-center justify-center hover:scale-125 active:scale-130 transition-transform z-10 touch-none ring-2 ring-yellow-400/40"
-                title={`右边界控制柄: ${clampedRight}年 (拖拽调节)`}
+                className="absolute -translate-x-1/2 w-5 h-5 rounded-full bg-yellow-400 border-2 border-slate-950 shadow-lg shadow-yellow-500/50 cursor-ew-resize flex items-center justify-center hover:scale-125 active:scale-130 transition-transform z-10 touch-none ring-2 ring-yellow-400/50"
+                title={`右边界控制柄: ${clampedRight}年 (当前时期上限: ${epochMax}年)`}
               >
                 <div className="w-1.5 h-1.5 rounded-full bg-slate-950" />
               </div>
             </div>
           </div>
-
-          {/* Section 3: Event Cards Horizontal List */}
-          <div className="flex-1 overflow-x-auto overflow-y-hidden px-4 py-2 flex items-center gap-3 scrollbar-thin min-h-[78px]">
-            {filteredEvents.length === 0 ? (
-              <div className="w-full text-center text-xs text-slate-400 py-2">
-                当前时期区间 ({clampedLeft} ~ {clampedRight}年) 内暂无事件，可拖动上方控制柄放大范围或点击“添加时间点事件”。
-              </div>
-            ) : (
-              filteredEvents.map((evt) => {
-                const isSelected = selectedTimelineEventId === evt.id;
-                const linkedLoc = locations.find((l) => l.id === evt.locationId);
-
-                return (
-                  <div
-                    key={evt.id}
-                    onClick={() => {
-                      setSelectedTimelineEventId(isSelected ? null : evt.id);
-                      if (linkedLoc && typeof linkedLoc.lat === 'number') {
-                        setSelectedMapLocationId(linkedLoc.id);
-                        flyToLocation(linkedLoc.lat, linkedLoc.lng, 5.5);
-                      }
-                    }}
-                    className={`min-w-[240px] max-w-[280px] h-[72px] rounded-xl border p-2 flex flex-col justify-between cursor-pointer transition-all shrink-0 relative group ${
-                      isSelected
-                        ? 'bg-slate-800 border-sky-400 shadow-lg shadow-sky-500/20'
-                        : 'bg-slate-950/80 border-slate-800 hover:border-slate-700 hover:bg-slate-900/90'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="font-mono font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
-                        {evt.timeLabel || `${evt.year}年`}
-                      </span>
-                      {evt.tag && (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300">
-                          {evt.tag}
-                        </span>
-                      )}
-                    </div>
-
-                    <h4 className="text-xs font-bold text-slate-100 truncate mt-0.5">
-                      {evt.title}
-                    </h4>
-
-                    <div className="flex items-center justify-between text-[10px]">
-                      {linkedLoc ? (
-                        <div
-                          className="flex items-center gap-1 text-emerald-400 hover:underline truncate"
-                          title={`位于: ${linkedLoc.name}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedMapLocationId(linkedLoc.id);
-                            flyToLocation(linkedLoc.lat, linkedLoc.lng, 5.5);
-                          }}
-                        >
-                          <MapPin className="w-3 h-3 shrink-0" />
-                          <span className="truncate">{linkedLoc.name}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">无关联地点</span>
-                      )}
-
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingEvent(evt);
-                          }}
-                          className="p-1 text-slate-400 hover:text-sky-400 hover:bg-slate-800 rounded"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            if (confirm(`确定要删除事件“${evt.title}”吗？`)) {
-                              await deleteTimelineEvent(evt.id);
-                            }
-                          }}
-                          className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Edit / Create Location Modal */}
-      {editingLocation && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <form
-            onSubmit={handleSaveLocation}
-            className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl space-y-4"
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <MapPin className="w-4 h-4 text-sky-400" />
-                <span>{editingLocation.id ? '编辑地标标注点' : '新建经纬度标注点'}</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setEditingLocation(null)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">地点名称 *</label>
-                <input
-                  type="text"
-                  value={editingLocation.name}
-                  onChange={(e) =>
-                    setEditingLocation({ ...editingLocation, name: e.target.value })
-                  }
-                  placeholder="例如：极东新京都市、圣辉王都..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:border-sky-500"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">所属国家 / 领地</label>
-                  <input
-                    type="text"
-                    value={editingLocation.country || ''}
-                    onChange={(e) =>
-                      setEditingLocation({ ...editingLocation, country: e.target.value })
-                    }
-                    placeholder="例如：中国、英国、日本..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:border-sky-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">所属省州 / 大区</label>
-                  <input
-                    type="text"
-                    value={editingLocation.region || ''}
-                    onChange={(e) =>
-                      setEditingLocation({ ...editingLocation, region: e.target.value })
-                    }
-                    placeholder="例如：东亚都市圈、加利福尼亚..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:border-sky-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">真实经纬度</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      step="0.001"
-                      value={editingLocation.lat}
-                      onChange={(e) =>
-                        setEditingLocation({ ...editingLocation, lat: Number(e.target.value) })
-                      }
-                      className="w-1/2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-slate-100 text-center font-mono"
-                      title="纬度 Lat"
-                    />
-                    <input
-                      type="number"
-                      step="0.001"
-                      value={editingLocation.lng}
-                      onChange={(e) =>
-                        setEditingLocation({ ...editingLocation, lng: Number(e.target.value) })
-                      }
-                      className="w-1/2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-slate-100 text-center font-mono"
-                      title="经度 Lng"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">初现年份 / 纪元</label>
-                  <input
-                    type="number"
-                    value={editingLocation.year ?? 2024}
-                    onChange={(e) =>
-                      setEditingLocation({ ...editingLocation, year: Number(e.target.value) })
-                    }
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-sky-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">光效与主题颜色</label>
-                <div className="flex items-center gap-2">
-                  {COLOR_PRESETS.map((color) => {
-                    const isSelected = editingLocation.color === color;
-                    return (
-                      <button
-                        key={color}
-                        type="button"
-                        onClick={() => setEditingLocation({ ...editingLocation, color })}
-                        className={`w-6 h-6 rounded-full transition-transform ${
-                          isSelected ? 'scale-125 ring-2 ring-white' : 'hover:scale-110'
-                        }`}
-                        style={{ backgroundColor: color }}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">设定与背景简介</label>
-                <textarea
-                  rows={3}
-                  value={editingLocation.description}
-                  onChange={(e) =>
-                    setEditingLocation({ ...editingLocation, description: e.target.value })
-                  }
-                  placeholder="描写该地貌的生态、势力归属、历史渊源..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-100 placeholder-slate-400 focus:outline-none focus:border-sky-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
-              <button
-                type="button"
-                onClick={() => setEditingLocation(null)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg transition-colors"
-              >
-                保存标注点
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Edit / Create Timeline Event Modal */}
-      {editingEvent && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <form
-            onSubmit={handleSaveTimelineEvent}
-            className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl space-y-4"
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-amber-400" />
-                <span>{editingEvent.id ? '编辑时间点事件' : '记录新时间点事件'}</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setEditingEvent(null)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">所属历史纪元</label>
-                  <select
-                    value={editingEvent.epochId || currentEpochId}
-                    onChange={(e) =>
-                      setEditingEvent({ ...editingEvent, epochId: e.target.value })
-                    }
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-slate-100 focus:outline-none focus:border-amber-500"
-                  >
-                    {epochs.map((ep) => (
-                      <option key={ep.id} value={ep.id}>
-                        {ep.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">事件年份 (用于排序) *</label>
-                  <input
-                    type="number"
-                    value={editingEvent.year ?? 2024}
-                    onChange={(e) =>
-                      setEditingEvent({
-                        ...editingEvent,
-                        year: Number(e.target.value),
-                        timeLabel: `${e.target.value}年`
-                      })
-                    }
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-amber-500"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">事件名称 / 标题 *</label>
-                <input
-                  type="text"
-                  value={editingEvent.title}
-                  onChange={(e) =>
-                    setEditingEvent({ ...editingEvent, title: e.target.value })
-                  }
-                  placeholder="例如：天裂灾变、圣辉王都流血政变..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:border-amber-500"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">关联地理地标</label>
-                  <select
-                    value={editingEvent.locationId || ''}
-                    onChange={(e) =>
-                      setEditingEvent({ ...editingEvent, locationId: e.target.value })
-                    }
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-slate-100 focus:outline-none focus:border-amber-500"
-                  >
-                    <option value="">-- 无特定地标 --</option>
-                    {locations.map((loc) => (
-                      <option key={loc.id} value={loc.id}>
-                        {loc.name} ({loc.country || loc.region})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">事件分类 Tag</label>
-                  <input
-                    type="text"
-                    value={editingEvent.tag || ''}
-                    onChange={(e) =>
-                      setEditingEvent({ ...editingEvent, tag: e.target.value })
-                    }
-                    placeholder="例如：主线起点、远古史诗..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-400 focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">事件经过与影响简述</label>
-                <textarea
-                  rows={3}
-                  value={editingEvent.description || ''}
-                  onChange={(e) =>
-                    setEditingEvent({ ...editingEvent, description: e.target.value })
-                  }
-                  placeholder="描述该历史或情节事件的前因后果、参与人物与世界变迁..."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-100 placeholder-slate-400 focus:outline-none focus:border-amber-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
-              <button
-                type="button"
-                onClick={() => setEditingEvent(null)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition-colors"
-              >
-                保存事件
-              </button>
-            </div>
-          </form>
         </div>
       )}
     </div>
