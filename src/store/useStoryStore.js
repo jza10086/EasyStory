@@ -46,13 +46,13 @@ export const useStoryStore = create((set, get) => ({
   // Map & Timeline state
   mapData: {
     timelineSettings: {
-      minYear: -1000,
+      minYear: 2000,
       maxYear: 2100,
-      leftBound: -500,
-      rightBound: 2080,
+      leftBound: 2000,
+      rightBound: 2042,
       currentTime: 2024
     },
-    currentEpochId: 'epoch-modern',
+    currentEpochId: 'epoch-pre-ww3',
     epochs: [],
     locations: [],
     timeline: []
@@ -514,13 +514,13 @@ export const useStoryStore = create((set, get) => ({
       const current = get().mapData || {};
       const merged = {
         timelineSettings: newMapData?.timelineSettings || current.timelineSettings || {
-          minYear: -1000,
+          minYear: 2000,
           maxYear: 2100,
-          leftBound: -500,
-          rightBound: 2080,
+          leftBound: 2000,
+          rightBound: 2042,
           currentTime: 2024
         },
-        currentEpochId: newMapData?.currentEpochId || current.currentEpochId || 'epoch-modern',
+        currentEpochId: newMapData?.currentEpochId || current.currentEpochId || 'epoch-pre-ww3',
         epochs: newMapData?.epochs || current.epochs || [],
         locations: newMapData?.locations || current.locations || [],
         timeline: newMapData?.timeline || current.timeline || []
@@ -642,7 +642,7 @@ export const useStoryStore = create((set, get) => ({
   saveEpochLocation: async (epochId, locationData) => {
     const current = get().mapData || {};
     const epochs = [...(current.epochs || [])];
-    const targetEpochId = epochId || current.currentEpochId || epochs[0]?.id || 'epoch-modern';
+    const targetEpochId = epochId || current.currentEpochId || epochs[0]?.id || 'epoch-pre-ww3';
     const epochIndex = epochs.findIndex((e) => e.id === targetEpochId);
     if (epochIndex === -1) return null;
 

@@ -1018,19 +1018,19 @@ export default function MapView({ isActive = true }) {
   const setActiveDatabaseCategory = useStoryStore((s) => s.setActiveDatabaseCategory);
 
   const timelineSettings = mapData.timelineSettings || {
-    minYear: -1000,
+    minYear: 2000,
     maxYear: 2100,
-    leftBound: -500,
-    rightBound: 2080,
+    leftBound: 2000,
+    rightBound: 2042,
     currentTime: 2024
   };
-  const currentEpochId = mapData.currentEpochId || 'epoch-modern';
+  const currentEpochId = mapData.currentEpochId || 'epoch-pre-ww3';
   const epochs = mapData.epochs || [];
 
   // Total timeline extent across all epochs (总线范围)
   const totalMin = useMemo(() => {
-    if (!epochs.length) return -1000;
-    return Math.min(...epochs.map((ep) => ep.timeRange?.[0] ?? -1000));
+    if (!epochs.length) return 2000;
+    return Math.min(...epochs.map((ep) => ep.timeRange?.[0] ?? 2000));
   }, [epochs]);
 
   const totalMax = useMemo(() => {
@@ -1204,7 +1204,7 @@ export default function MapView({ isActive = true }) {
   };
 
   const handleSelectEpoch = (ep) => {
-    const epStart = ep.timeRange?.[0] ?? -1000;
+    const epStart = ep.timeRange?.[0] ?? 2000;
     const epEnd = ep.timeRange?.[1] ?? 2100;
     setActiveLeft(epStart);
     setActiveRight(epEnd);
@@ -1323,7 +1323,7 @@ export default function MapView({ isActive = true }) {
     setCreatingLocationData({
       title: suggestedName,
       name: suggestedName,
-      epochId: currentEpochRef.current?.id || 'epoch-ancient',
+      epochId: currentEpochRef.current?.id || 'epoch-pre-ww3',
       continent: gInfo.continent,
       country: gInfo.country,
       province: gInfo.province,
@@ -1383,7 +1383,7 @@ export default function MapView({ isActive = true }) {
         isSnappedToCenter: false
       };
 
-      const targetEpochId = locToMove.epochId || currentEpochRef.current?.id || 'epoch-ancient';
+      const targetEpochId = locToMove.epochId || currentEpochRef.current?.id || 'epoch-pre-ww3';
       await saveEpochLocation(targetEpochId, updatedLoc);
       setMovingLocation(null);
       setSelectedMapLocationId(updatedLoc.id);
@@ -1399,7 +1399,7 @@ export default function MapView({ isActive = true }) {
     async (loc) => {
       if (!loc) return;
       if (confirm(`确定要删除地点“${loc.name || loc.title}”吗？`)) {
-        const targetEpochId = loc.epochId || currentEpochRef.current?.id || 'epoch-ancient';
+        const targetEpochId = loc.epochId || currentEpochRef.current?.id || 'epoch-pre-ww3';
         await deleteEpochLocation(targetEpochId, loc.id);
         setActiveLocationCard(null);
         setSelectedMapLocationId(null);
@@ -2431,7 +2431,7 @@ export default function MapView({ isActive = true }) {
             <div className="w-full flex items-stretch border border-slate-700/80 rounded-xl overflow-hidden divide-x divide-slate-800 bg-slate-900/60 shadow-inner h-11">
               {epochs.map((ep) => {
                 const isCurrent = ep.id === currentEpochId;
-                const epStart = ep.timeRange?.[0] ?? -1000;
+                const epStart = ep.timeRange?.[0] ?? 2000;
                 const epEnd = ep.timeRange?.[1] ?? 2100;
                 const duration = Math.max(0, epEnd - epStart);
                 const widthPercent = totalSpan > 0 ? (duration / totalSpan) * 100 : 100 / epochs.length;

@@ -108,16 +108,27 @@ export default function LeftSidebar() {
     return Array.from(tagsSet);
   }, [entries, activeDatabaseCategory]);
 
-  // Filtered locations for map sub-panel
+  // Current active epoch in map
+  const currentEpoch = useMemo(() => {
+    return (mapData.epochs || []).find((e) => e.id === mapData.currentEpochId) || mapData.epochs?.[0] || null;
+  }, [mapData.epochs, mapData.currentEpochId]);
+
+  const currentEpochLocations = currentEpoch?.locations || [];
+
+  // Filtered locations for map sub-panel (epoch-aware)
   const filteredLocations = useMemo(() => {
-    if (!mapSearchText.trim()) return locations;
+    const list = currentEpochLocations;
+    if (!mapSearchText.trim()) return list;
     const kw = mapSearchText.toLowerCase();
-    return locations.filter(
+    return list.filter(
       (l) =>
-        (l.name || '').toLowerCase().includes(kw) ||
+        (l.name || l.title || '').toLowerCase().includes(kw) ||
+        (l.hierarchyText || '').toLowerCase().includes(kw) ||
+        (l.country || '').toLowerCase().includes(kw) ||
+        (l.province || '').toLowerCase().includes(kw) ||
         (l.region || '').toLowerCase().includes(kw)
     );
-  }, [locations, mapSearchText]);
+  }, [currentEpochLocations, mapSearchText]);
 
   const renderCategoryIcon = (iconName, className = 'w-4 h-4') => {
     const IconComponent = ICON_MAP[iconName] || Folder;
@@ -128,7 +139,7 @@ export default function LeftSidebar() {
   const WORKSPACES = [
     { id: 'nodes', label: '情节节点', icon: GitBranch, color: 'text-sky-400', badge: nodes.length },
     { id: 'database', label: '资料库', icon: Database, color: 'text-indigo-400', badge: entries.length },
-    { id: 'map', label: '地图', icon: Map, color: 'text-emerald-400', badge: locations.length }
+    { id: 'map', label: '地图', icon: Map, color: 'text-emerald-400', badge: currentEpochLocations.length }
   ];
 
   return (
@@ -414,58 +425,61 @@ export default function LeftSidebar() {
 
               {/* Locations List Header */}
               <div className="px-3 py-2 flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800/60 shrink-0">
-                <span className="flex items-center gap-1">
-                  <MapPin className="w-3 h-3 text-emerald-400" />
-                  地标索引 ({filteredLocations.length})
+                <span className="flex items-center gap-1 truncate">
+                  <MapPin className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <span className="truncate">地标索引 · {currentEpoch?.name || '当前时期'}</span>
+                  <span className="text-slate-500">({filteredLocations.length})</span>
                 </span>
               </div>
 
               {/* Locations items */}
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                {filteredLocations.map((loc) => {
-                  const isSelected = selectedMapLocationId === loc.id;
-                  const locColor = loc.color || '#38bdf8';
-                  const eventCount = timeline.filter((t) => t.locationId === loc.id).length;
+                {filteredLocations.length === 0 ? (
+                  <div className="py-12 px-4 text-center text-slate-500 text-xs flex flex-col items-center justify-center select-none">
+                    <MapPin className="w-8 h-8 mb-2 text-slate-600 opacity-40" />
+                    <p className="font-medium text-slate-400">当前时期暂无地标</p>
+                    <p className="text-[10px] text-slate-500 mt-1">在地图空白处右键即可新建地点</p>
+                  </div>
+                ) : (
+                  filteredLocations.map((loc) => {
+                    const isSelected = selectedMapLocationId === loc.id;
+                    const locColor = loc.color || '#38bdf8';
+                    const regionOrCountry = loc.hierarchyText || [loc.country, loc.province || loc.city].filter(Boolean).join(' · ') || loc.region;
 
-                  return (
-                    <div
-                      key={loc.id}
-                      onClick={() => setSelectedMapLocationId(isSelected ? null : loc.id)}
-                      className={`px-2.5 py-2 rounded-xl text-xs cursor-pointer border transition-all ${
-                        isSelected
-                          ? 'bg-emerald-950/40 border-emerald-500/60 text-white font-medium shadow-sm'
-                          : 'bg-slate-950/40 border-slate-800/80 text-slate-300 hover:bg-slate-800/60 hover:text-white'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 truncate">
-                          <span
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{ backgroundColor: locColor }}
-                          />
-                          <span className="truncate font-semibold text-slate-100">{loc.name}</span>
+                    return (
+                      <div
+                        key={loc.id}
+                        onClick={() => setSelectedMapLocationId(isSelected ? null : loc.id)}
+                        className={`px-2.5 py-2 rounded-xl text-xs cursor-pointer border transition-all ${
+                          isSelected
+                            ? 'bg-emerald-950/40 border-emerald-500/60 text-white font-medium shadow-sm'
+                            : 'bg-slate-950/40 border-slate-800/80 text-slate-300 hover:bg-slate-800/60 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-2 truncate">
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: locColor }}
+                            />
+                            <span className="truncate font-semibold text-slate-100">{loc.name || loc.title}</span>
+                          </div>
+                          {regionOrCountry && (
+                            <span className="text-[9px] text-slate-400 bg-slate-800 px-1 py-0.2 rounded shrink-0 max-w-[90px] truncate">
+                              {regionOrCountry}
+                            </span>
+                          )}
                         </div>
-                        {loc.region && (
-                          <span className="text-[9px] text-slate-400 bg-slate-800 px-1 py-0.2 rounded shrink-0">
-                            {loc.region}
-                          </span>
-                        )}
                       </div>
-                      {eventCount > 0 && (
-                        <div className="mt-1 text-[10px] text-slate-400 flex items-center gap-1">
-                          <Clock className="w-2.5 h-2.5 text-amber-400" />
-                          <span>{eventCount} 篇纪事</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
 
               {/* Timeline Epochs Summary Footer */}
               <div className="p-2.5 border-t border-slate-800 shrink-0 bg-slate-950/50 text-[11px] text-slate-400 flex items-center justify-between">
-                <span>总地标: {locations.length}</span>
-                <span>编年事件: {timeline.length}</span>
+                <span>当前时期地标: {currentEpochLocations.length}</span>
+                <span>{currentEpoch?.timeRange ? `${currentEpoch.timeRange[0]} ~ ${currentEpoch.timeRange[1]}年` : ''}</span>
               </div>
             </div>
           )}
