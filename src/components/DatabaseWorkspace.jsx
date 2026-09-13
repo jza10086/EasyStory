@@ -1,6 +1,8 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useStoryStore } from '../store/useStoryStore';
 import ReactMarkdown from 'react-markdown';
+import { preloadGeoAssets } from '../services/geoPreloader';
+import { reverseGeocode, searchAdministrativeDivisions } from '../services/geoHierarchyService';
 import {
   Database,
   Users,
@@ -31,7 +33,9 @@ import {
   Square,
   Loader2,
   SlidersHorizontal,
-  ChevronRight
+  ChevronRight,
+  MapPin,
+  Compass
 } from 'lucide-react';
 
 const ICON_MAP = {
@@ -42,7 +46,9 @@ const ICON_MAP = {
   Folder,
   BookOpen,
   Sparkles,
-  Shield
+  Shield,
+  MapPin,
+  Compass
 };
 
 const COLOR_PRESETS = [
@@ -71,6 +77,13 @@ export default function DatabaseWorkspace() {
   const saveDatabaseCategory = useStoryStore((s) => s.saveDatabaseCategory);
   const deleteDatabaseCategory = useStoryStore((s) => s.deleteDatabaseCategory);
 
+  // Map & Epoch Location Store actions
+  const mapData = useStoryStore((s) => s.mapData) || { epochs: [] };
+  const saveEpochLocation = useStoryStore((s) => s.saveEpochLocation);
+  const deleteEpochLocation = useStoryStore((s) => s.deleteEpochLocation);
+  const setSelectedMapLocationId = useStoryStore((s) => s.setSelectedMapLocationId);
+  const selectEpoch = useStoryStore((s) => s.selectEpoch);
+
   const categories = database.categories || [];
   const entries = database.entries || [];
 
@@ -84,6 +97,34 @@ export default function DatabaseWorkspace() {
     icon: 'Folder',
     isCharacterType: false
   };
+
+  // State for Map Epoch Folders (when in 'locations' category)
+  const [selectedEpochFolderId, setSelectedEpochFolderId] = useState(() => {
+    return mapData.currentEpochId || mapData.epochs?.[0]?.id || 'epoch-ancient';
+  });
+
+  // State for Administrative division search (for location cards)
+  const [divisionQuery, setDivisionQuery] = useState('');
+  const [divisionResults, setDivisionResults] = useState([]);
+  const [isDivisionDropdownOpen, setIsDivisionDropdownOpen] = useState(false);
+
+  // Preload geo assets for reverse geocoding & autocomplete
+  useEffect(() => {
+    preloadGeoAssets().catch(() => {});
+  }, []);
+
+  // Sync selectedEpochFolderId if mapData changes
+  useEffect(() => {
+    if (mapData.epochs && mapData.epochs.length > 0) {
+      const exists = mapData.epochs.some((e) => e.id === selectedEpochFolderId);
+      if (!exists) {
+        setSelectedEpochFolderId(mapData.currentEpochId || mapData.epochs[0].id);
+      }
+    }
+  }, [mapData.epochs, mapData.currentEpochId, selectedEpochFolderId]);
+
+  const currentEpochFolder = mapData.epochs?.find((e) => e.id === selectedEpochFolderId) || mapData.epochs?.[0];
+  const currentEpochLocations = currentEpochFolder?.locations || [];
 
   // State for Card Editor
   const [editingEntry, setEditingEntry] = useState(null); // null = closed, object = editing/creating
@@ -110,6 +151,23 @@ export default function DatabaseWorkspace() {
 
   // Filter entries for current active category, search keyword, and tag
   const filteredEntries = useMemo(() => {
+    if (activeCategory.id === 'locations') {
+      return currentEpochLocations.filter((loc) => {
+        if (selectedDatabaseTag && (!Array.isArray(loc.tags) || !loc.tags.includes(selectedDatabaseTag))) {
+          return false;
+        }
+        if (databaseSearchKeyword.trim()) {
+          const kw = databaseSearchKeyword.toLowerCase();
+          const titleMatch = (loc.title || loc.name || '').toLowerCase().includes(kw);
+          const bioMatch = (loc.summary || loc.description || loc.content || '').toLowerCase().includes(kw);
+          const geoMatch = (loc.hierarchyText || loc.country || loc.province || loc.continent || '').toLowerCase().includes(kw);
+          const tagMatch = (loc.tags || []).some((t) => t.toLowerCase().includes(kw));
+          return titleMatch || bioMatch || geoMatch || tagMatch;
+        }
+        return true;
+      });
+    }
+
     return entries.filter((e) => {
       if (e.categoryId !== activeCategory.id) return false;
       if (selectedDatabaseTag && (!Array.isArray(e.tags) || !e.tags.includes(selectedDatabaseTag))) {
@@ -124,20 +182,28 @@ export default function DatabaseWorkspace() {
       }
       return true;
     });
-  }, [entries, activeCategory.id, selectedDatabaseTag, databaseSearchKeyword]);
+  }, [entries, activeCategory.id, selectedDatabaseTag, databaseSearchKeyword, currentEpochLocations]);
 
   // All tags in active category
   const activeCategoryTags = useMemo(() => {
     const setTags = new Set();
-    entries
-      .filter((e) => e.categoryId === activeCategory.id)
-      .forEach((e) => {
+    if (activeCategory.id === 'locations') {
+      currentEpochLocations.forEach((e) => {
         if (Array.isArray(e.tags)) {
           e.tags.forEach((t) => setTags.add(t));
         }
       });
+    } else {
+      entries
+        .filter((e) => e.categoryId === activeCategory.id)
+        .forEach((e) => {
+          if (Array.isArray(e.tags)) {
+            e.tags.forEach((t) => setTags.add(t));
+          }
+        });
+    }
     return Array.from(setTags);
-  }, [entries, activeCategory.id]);
+  }, [entries, activeCategory.id, currentEpochLocations]);
 
   const renderIcon = (iconName, className = 'w-4 h-4') => {
     const IconComponent = ICON_MAP[iconName] || Folder;
@@ -149,6 +215,47 @@ export default function DatabaseWorkspace() {
     if (!rawEntry) return;
     const finalName = (rawEntry.title || rawEntry.name || '').trim();
     if (!finalName) return;
+
+    // Handle Location category persistence to Epoch Locations
+    if (rawEntry.categoryId === 'locations' || activeCategory.id === 'locations') {
+      const targetEpochId = rawEntry.epochId || selectedEpochFolderId || mapData.currentEpochId || mapData.epochs?.[0]?.id;
+      const finalImages = Array.isArray(rawEntry.images) ? rawEntry.images : [];
+      const finalPreview = rawEntry.previewImage || finalImages[0] || '';
+
+      const normalizedLoc = {
+        ...rawEntry,
+        id: rawEntry.id || `loc-${Date.now().toString(36)}`,
+        categoryId: 'locations',
+        epochId: targetEpochId,
+        title: finalName,
+        name: finalName,
+        continent: rawEntry.continent || '亚洲',
+        country: rawEntry.country || '',
+        province: rawEntry.province || '',
+        city: rawEntry.city || '',
+        lat: typeof rawEntry.lat === 'number' ? rawEntry.lat : 30.0,
+        lng: typeof rawEntry.lng === 'number' ? rawEntry.lng : 110.0,
+        centerLat: typeof rawEntry.centerLat === 'number' ? rawEntry.centerLat : (rawEntry.lat || 30.0),
+        centerLng: typeof rawEntry.centerLng === 'number' ? rawEntry.centerLng : (rawEntry.lng || 110.0),
+        isSnappedToCenter: !!rawEntry.isSnappedToCenter,
+        hierarchyText: rawEntry.hierarchyText || [rawEntry.continent, rawEntry.country, rawEntry.province || rawEntry.city].filter(Boolean).join(' · '),
+        summary: rawEntry.summary || rawEntry.description || '',
+        description: rawEntry.description || rawEntry.summary || '',
+        content: rawEntry.content || '',
+        tags: Array.isArray(rawEntry.tags) ? rawEntry.tags : ['据点'],
+        images: finalImages,
+        previewImage: finalPreview,
+        cardStyle: rawEntry.cardStyle || 'standard',
+        color: rawEntry.color || '#38bdf8'
+      };
+
+      if (!rawEntry.id && normalizedLoc.id) {
+        setEditingEntry((prev) => (prev ? { ...prev, id: normalizedLoc.id } : null));
+      }
+
+      await saveEpochLocation(targetEpochId, normalizedLoc);
+      return normalizedLoc;
+    }
 
     const finalImages = Array.isArray(rawEntry.images) ? rawEntry.images : [];
     const finalPreview = rawEntry.previewImage || finalImages[0] || '';
@@ -203,6 +310,44 @@ export default function DatabaseWorkspace() {
 
   // Open editor for new entry
   const handleCreateNewEntry = () => {
+    if (activeCategory.id === 'locations') {
+      const targetEpoch = selectedEpochFolderId || mapData.currentEpochId || mapData.epochs?.[0]?.id || 'epoch-ancient';
+      const newLoc = {
+        id: '',
+        categoryId: 'locations',
+        epochId: targetEpoch,
+        title: '',
+        name: '',
+        continent: '亚洲',
+        country: '中国',
+        province: '陕西省',
+        city: '西安市',
+        lat: 34.3416,
+        lng: 108.9402,
+        centerLat: 34.3416,
+        centerLng: 108.9402,
+        isSnappedToCenter: true,
+        hierarchyText: '亚洲 · 中国 · 陕西省',
+        tags: ['据点'],
+        summary: '',
+        bio: '',
+        content: '',
+        images: [],
+        previewImage: '',
+        cardStyle: 'standard',
+        color: '#38bdf8'
+      };
+      setEditingEntry(newLoc);
+      latestEditingEntryRef.current = newLoc;
+      setCardSaveStatus('saved');
+      setTagInput('');
+      setImageUrlInput('');
+      setEditorTab('content');
+      setDivisionQuery('');
+      setDivisionResults([]);
+      return;
+    }
+
     const defaultStyle = activeCategory.id === 'tech' ? 'square' : 'standard';
     const newEntry = {
       id: '',
@@ -239,6 +384,8 @@ export default function DatabaseWorkspace() {
 
     const loadedEntry = {
       ...entry,
+      categoryId: entry.categoryId || (activeCategory.id === 'locations' ? 'locations' : 'general'),
+      epochId: entry.epochId || selectedEpochFolderId || mapData.currentEpochId || mapData.epochs?.[0]?.id,
       title: entry.title || entry.name || '',
       name: entry.name || entry.title || '',
       tags: Array.isArray(entry.tags) ? [...entry.tags] : [],
@@ -246,7 +393,18 @@ export default function DatabaseWorkspace() {
       previewImage: entryPreview,
       cardStyle: entry.cardStyle || 'standard',
       color: entry.color || '#38bdf8',
-      initialAffection: entry.initialAffection ?? 50
+      initialAffection: entry.initialAffection ?? 50,
+      // Geo properties
+      continent: entry.continent || '亚洲',
+      country: entry.country || '',
+      province: entry.province || '',
+      city: entry.city || '',
+      lat: typeof entry.lat === 'number' ? entry.lat : 34.3416,
+      lng: typeof entry.lng === 'number' ? entry.lng : 108.9402,
+      centerLat: typeof entry.centerLat === 'number' ? entry.centerLat : (entry.lat || 34.3416),
+      centerLng: typeof entry.centerLng === 'number' ? entry.centerLng : (entry.lng || 108.9402),
+      isSnappedToCenter: !!entry.isSnappedToCenter,
+      hierarchyText: entry.hierarchyText || [entry.continent, entry.country, entry.province || entry.city].filter(Boolean).join(' · ')
     };
 
     setEditingEntry(loadedEntry);
@@ -255,6 +413,8 @@ export default function DatabaseWorkspace() {
     setTagInput('');
     setImageUrlInput('');
     setEditorTab('content');
+    setDivisionQuery('');
+    setDivisionResults([]);
   };
 
   // Close drawer and immediately flush save
@@ -456,8 +616,10 @@ export default function DatabaseWorkspace() {
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {categories.map((cat) => {
               const isActive = activeDatabaseCategory === cat.id;
-              const count = entries.filter((e) => e.categoryId === cat.id).length;
-              const isBuiltIn = ['characters', 'world'].includes(cat.id);
+              const count = cat.id === 'locations'
+                ? (mapData.epochs || []).reduce((sum, ep) => sum + (ep.locations?.length || 0), 0)
+                : entries.filter((e) => e.categoryId === cat.id).length;
+              const isBuiltIn = ['characters', 'world', 'locations'].includes(cat.id);
 
               return (
                 <div
@@ -596,6 +758,56 @@ export default function DatabaseWorkspace() {
               </div>
             </div>
 
+            {/* Epoch Folders Row for Locations */}
+            {activeCategory.id === 'locations' && (
+              <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-amber-300 flex items-center gap-1.5">
+                    <Folder className="w-3.5 h-3.5 text-amber-400" />
+                    <span>地图时期地点文件夹 (按历史时期归档)</span>
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    当前文件夹：<strong className="text-amber-200">{currentEpochFolder?.name || '未知时期'}</strong> · 共 {currentEpochLocations.length} 个据点
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+                  {(mapData.epochs || []).map((ep) => {
+                    const isSelectedFolder = ep.id === selectedEpochFolderId;
+                    const locCount = ep.locations?.length || 0;
+                    return (
+                      <button
+                        key={ep.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedEpochFolderId(ep.id);
+                          setSelectedDatabaseTag(null);
+                        }}
+                        className={`flex items-center gap-2.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 border ${
+                          isSelectedFolder
+                            ? 'bg-amber-500/20 border-amber-500/70 text-amber-200 shadow-md shadow-amber-500/10'
+                            : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                        }`}
+                      >
+                        <Folder className={`w-3.5 h-3.5 ${isSelectedFolder ? 'text-amber-400' : 'text-slate-400'}`} />
+                        <div className="text-left">
+                          <span className="font-bold">{ep.name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono ml-1.5">
+                            ({ep.timeRange?.[0]} ~ {ep.timeRange?.[1]}年)
+                          </span>
+                        </div>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-1 ${
+                          isSelectedFolder ? 'bg-amber-500/40 text-amber-100' : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {locCount}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Tag Filter Pills Bar */}
             <div className="flex items-center gap-2 flex-wrap pt-1">
               <span className="text-xs text-slate-400 flex items-center gap-1 shrink-0">
@@ -609,14 +821,14 @@ export default function DatabaseWorkspace() {
                     : 'bg-slate-800/80 text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-slate-700/60'
                 }`}
               >
-                全部 ({entries.filter((e) => e.categoryId === activeCategory.id).length})
+                全部 ({activeCategory.id === 'locations' ? currentEpochLocations.length : entries.filter((e) => e.categoryId === activeCategory.id).length})
               </button>
 
               {activeCategoryTags.map((tag) => {
                 const isSelected = selectedDatabaseTag === tag;
-                const count = entries.filter(
-                  (e) => e.categoryId === activeCategory.id && Array.isArray(e.tags) && e.tags.includes(tag)
-                ).length;
+                const count = activeCategory.id === 'locations'
+                  ? currentEpochLocations.filter((e) => Array.isArray(e.tags) && e.tags.includes(tag)).length
+                  : entries.filter((e) => e.categoryId === activeCategory.id && Array.isArray(e.tags) && e.tags.includes(tag)).length;
 
                 return (
                   <button
@@ -731,7 +943,11 @@ export default function DatabaseWorkspace() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 if (confirm(`确定要删除“${entry.title || entry.name}”卡片吗？`)) {
-                                  deleteDatabaseEntry(entry.id);
+                                  if (activeCategory.id === 'locations' || entry.categoryId === 'locations') {
+                                    deleteEpochLocation(entry.epochId || selectedEpochFolderId, entry.id);
+                                  } else {
+                                    deleteDatabaseEntry(entry.id);
+                                  }
                                 }
                               }}
                               className="p-1.5 bg-slate-900/90 hover:bg-rose-600 text-slate-300 hover:text-white rounded-lg backdrop-blur-sm transition-colors shadow"
@@ -805,7 +1021,11 @@ export default function DatabaseWorkspace() {
                               />
                             ) : (
                               <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-sky-400 shrink-0 border border-slate-700">
-                                {renderIcon(activeCategory.icon, 'w-4 h-4')}
+                                {activeCategory.id === 'locations' || entry.categoryId === 'locations' ? (
+                                  <MapPin className="w-5 h-5 text-sky-400" />
+                                ) : (
+                                  renderIcon(activeCategory.icon, 'w-4 h-4')
+                                )}
                               </div>
                             )}
 
@@ -837,7 +1057,11 @@ export default function DatabaseWorkspace() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 if (confirm(`确定要删除“${entry.title || entry.name}”卡片吗？`)) {
-                                  deleteDatabaseEntry(entry.id);
+                                  if (activeCategory.id === 'locations' || entry.categoryId === 'locations') {
+                                    deleteEpochLocation(entry.epochId || selectedEpochFolderId, entry.id);
+                                  } else {
+                                    deleteDatabaseEntry(entry.id);
+                                  }
                                 }
                               }}
                               className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-700/80 rounded-lg transition-colors"
@@ -847,6 +1071,26 @@ export default function DatabaseWorkspace() {
                             </button>
                           </div>
                         </div>
+
+                        {/* Location Hierarchy & Coordinates Card (4-Level hierarchy) */}
+                        {(activeCategory.id === 'locations' || entry.categoryId === 'locations') && (
+                          <div className="bg-slate-950/80 rounded-xl p-2.5 px-3 border border-slate-800 space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-xs text-sky-300 font-semibold truncate">
+                              <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                              <span className="truncate">
+                                {entry.hierarchyText || [entry.continent, entry.country, entry.province || entry.city].filter(Boolean).join(' · ') || '世界地理未定'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                              <span>坐标: [{Number(entry.lng ?? 0).toFixed(4)}°, {Number(entry.lat ?? 0).toFixed(4)}°]</span>
+                              {entry.isSnappedToCenter && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/80">
+                                  中心吸附
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Character Affection Indicator with comfortable padding */}
                         {isChar && (
@@ -873,11 +1117,11 @@ export default function DatabaseWorkspace() {
 
                         {/* Summary / Bio with increased line-height & margin */}
                         <p className="text-xs text-slate-300/90 line-clamp-3 leading-relaxed px-0.5 pt-0.5">
-                          {entry.summary || entry.bio || entry.content || '暂无内容概要...'}
+                          {entry.summary || entry.bio || entry.description || entry.content || '暂无内容概要...'}
                         </p>
                       </div>
 
-                      {/* Card Footer: Tags & Images count with clean top margin & padding */}
+                      {/* Card Footer: Tags, Images count & Map Locate button */}
                       <div className="pt-3.5 mt-3.5 border-t border-slate-800/80 flex items-center justify-between">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {Array.isArray(entry.tags) && entry.tags.length > 0 ? (
@@ -898,13 +1142,35 @@ export default function DatabaseWorkspace() {
                           )}
                         </div>
 
-                        {/* Image count badge */}
-                        {Array.isArray(entry.images) && entry.images.length > 0 && (
-                          <span className="text-[10px] text-slate-400 flex items-center gap-1 shrink-0 ml-1.5 bg-slate-800/60 px-1.5 py-0.5 rounded border border-slate-700/50">
-                            <ImageIcon className="w-3 h-3 text-sky-400/80" />
-                            <span>{entry.images.length}</span>
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {/* Image count badge */}
+                          {Array.isArray(entry.images) && entry.images.length > 0 && (
+                            <span className="text-[10px] text-slate-400 flex items-center gap-1 shrink-0 bg-slate-800/60 px-1.5 py-0.5 rounded border border-slate-700/50">
+                              <ImageIcon className="w-3 h-3 text-sky-400/80" />
+                              <span>{entry.images.length}</span>
+                            </span>
+                          )}
+
+                          {/* Map Locate Button */}
+                          {(activeCategory.id === 'locations' || entry.categoryId === 'locations') && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (entry.epochId && entry.epochId !== mapData.currentEpochId) {
+                                  selectEpoch(entry.epochId);
+                                }
+                                setSelectedMapLocationId(entry.id);
+                                setActiveWorkspace('map');
+                              }}
+                              className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-sky-600/30 hover:bg-sky-600 text-sky-200 hover:text-white border border-sky-500/40 transition-colors shadow-sm ml-1"
+                              title="在世界地图中定位此据点并查看"
+                            >
+                              <Compass className="w-3 h-3 text-sky-300" />
+                              <span>地图定位</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -954,6 +1220,26 @@ export default function DatabaseWorkspace() {
                   </span>
                 )}
 
+                {(editingEntry.categoryId === 'locations' || activeCategory.id === 'locations') && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const targetId = editingEntry.id || 'loc-temp';
+                      await handleCloseDrawer();
+                      if (editingEntry.epochId && editingEntry.epochId !== mapData.currentEpochId) {
+                        selectEpoch(editingEntry.epochId);
+                      }
+                      setSelectedMapLocationId(targetId);
+                      setActiveWorkspace('map');
+                    }}
+                    className="flex items-center gap-1.5 bg-sky-600/30 hover:bg-sky-600 text-sky-200 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-sky-500/40 transition-colors shadow-sm"
+                    title="在世界地图中定位并查看此地点"
+                  >
+                    <Compass className="w-3.5 h-3.5 text-sky-300" />
+                    <span>在地图中定位</span>
+                  </button>
+                )}
+
                 <button
                   onClick={handleCloseDrawer}
                   className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg border border-slate-700 shadow-sm transition-colors"
@@ -988,7 +1274,7 @@ export default function DatabaseWorkspace() {
 
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-slate-300 mb-1">
-                    条目标题 / 道具名称 <span className="text-rose-400">*</span>
+                    {editingEntry.categoryId === 'locations' || activeCategory.id === 'locations' ? '地点据点名称' : '条目标题 / 道具名称'} <span className="text-rose-400">*</span>
                   </label>
                   <input
                     type="text"
@@ -999,11 +1285,263 @@ export default function DatabaseWorkspace() {
                         name: e.target.value
                       })
                     }
-                    placeholder="例如：圣辉王印吊坠 / 艾莉丝 (Alice) / 古代以太原石"
+                    placeholder={
+                      editingEntry.categoryId === 'locations' || activeCategory.id === 'locations'
+                        ? '例如：以太帝都·天穹圣座 / 晨曦港 / 龙息要塞'
+                        : '例如：圣辉王印吊坠 / 艾莉丝 (Alice) / 古代以太原石'
+                    }
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
                   />
                 </div>
               </div>
+
+              {/* Location Establishment & Geo Hierarchy Section */}
+              {(editingEntry.categoryId === 'locations' || activeCategory.id === 'locations') && (
+                <div className="bg-slate-950/80 border border-slate-800 p-4 rounded-xl space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                    <h4 className="text-xs font-bold text-sky-300 flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-sky-400" />
+                      <span>地理位置确立与隶属层级</span>
+                    </h4>
+                    <span className="text-[11px] text-slate-400">
+                      支持省市搜索定位或精确经纬度设定
+                    </span>
+                  </div>
+
+                  {/* Epoch Folder Selection */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      所属地图时期文件夹 (归属时代) <span className="text-rose-400">*</span>
+                    </label>
+                    <select
+                      value={editingEntry.epochId || selectedEpochFolderId}
+                      onChange={(e) => updateEditingEntry({ epochId: e.target.value })}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500 font-medium"
+                    >
+                      {(mapData.epochs || []).map((ep) => (
+                        <option key={ep.id} value={ep.id}>
+                          {ep.name} ({ep.timeRange?.[0]} ~ {ep.timeRange?.[1]}年)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Search Province / City Autocomplete */}
+                  <div className="relative">
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      快速搜索行政区划（省份 / 城市 / 国家）
+                    </label>
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        value={divisionQuery}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setDivisionQuery(val);
+                          if (val.trim()) {
+                            const res = searchAdministrativeDivisions(val);
+                            setDivisionResults(res);
+                            setIsDivisionDropdownOpen(true);
+                          } else {
+                            setDivisionResults([]);
+                            setIsDivisionDropdownOpen(false);
+                          }
+                        }}
+                        onFocus={() => {
+                          if (divisionQuery.trim()) {
+                            const res = searchAdministrativeDivisions(divisionQuery);
+                            setDivisionResults(res);
+                            setIsDivisionDropdownOpen(true);
+                          }
+                        }}
+                        placeholder="输入省份、城市或国家，例如：陕西、巴黎、埃及、加利福尼亚..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-8 py-2 text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:border-sky-500"
+                      />
+                      {divisionQuery && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDivisionQuery('');
+                            setDivisionResults([]);
+                            setIsDivisionDropdownOpen(false);
+                          }}
+                          className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-200"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Dropdown Results */}
+                    {isDivisionDropdownOpen && divisionResults.length > 0 && (
+                      <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-h-52 overflow-y-auto divide-y divide-slate-800">
+                        {divisionResults.map((item, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              const geo = reverseGeocode(item.lng, item.lat);
+                              const newUpdates = {
+                                continent: item.continent || geo.continent,
+                                country: item.country || geo.country,
+                                province: item.type === 'province' ? item.name : (geo.province || ''),
+                                city: item.type === 'province' ? item.name : (geo.city || ''),
+                                lat: parseFloat(item.lat.toFixed(4)),
+                                lng: parseFloat(item.lng.toFixed(4)),
+                                centerLat: parseFloat(item.lat.toFixed(4)),
+                                centerLng: parseFloat(item.lng.toFixed(4)),
+                                isSnappedToCenter: true,
+                                hierarchyText: item.hierarchyText || geo.hierarchyText
+                              };
+                              if (!editingEntry.title && !editingEntry.name) {
+                                newUpdates.title = item.name;
+                                newUpdates.name = item.name;
+                              }
+                              updateEditingEntry(newUpdates);
+                              setIsDivisionDropdownOpen(false);
+                              setDivisionQuery('');
+                            }}
+                            className="p-2.5 hover:bg-slate-800 cursor-pointer flex items-center justify-between text-xs transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <MapPin className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                              <div>
+                                <span className="font-semibold text-slate-100">{item.name}</span>
+                                {item.nameEn && item.nameEn !== item.name && (
+                                  <span className="text-[10px] text-slate-400 ml-1.5 font-mono">({item.nameEn})</span>
+                                )}
+                                <div className="text-[10px] text-slate-400">{item.hierarchyText}</div>
+                              </div>
+                            </div>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-sky-300 border border-slate-700 font-mono shrink-0">
+                              {item.type === 'province' ? '省州行政区' : '国家主权'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual Lat / Lng Inputs */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                        经度 (Longitude, -180 ~ 180)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={editingEntry.lng ?? 108.9402}
+                        onChange={(e) => {
+                          const newLng = parseFloat(e.target.value) || 0;
+                          const geo = reverseGeocode(newLng, editingEntry.lat ?? 0);
+                          updateEditingEntry({
+                            lng: newLng,
+                            continent: geo.continent,
+                            country: geo.country,
+                            province: geo.province,
+                            city: geo.city,
+                            centerLat: geo.centerLat,
+                            centerLng: geo.centerLng,
+                            isSnappedToCenter: false,
+                            hierarchyText: geo.hierarchyText
+                          });
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                        纬度 (Latitude, -90 ~ 90)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={editingEntry.lat ?? 34.3416}
+                        onChange={(e) => {
+                          const newLat = parseFloat(e.target.value) || 0;
+                          const geo = reverseGeocode(editingEntry.lng ?? 0, newLat);
+                          updateEditingEntry({
+                            lat: newLat,
+                            continent: geo.continent,
+                            country: geo.country,
+                            province: geo.province,
+                            city: geo.city,
+                            centerLat: geo.centerLat,
+                            centerLng: geo.centerLng,
+                            isSnappedToCenter: false,
+                            hierarchyText: geo.hierarchyText
+                          });
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Snap to Center Toggle */}
+                  <div className="flex items-center justify-between bg-slate-900/90 p-2.5 px-3 rounded-lg border border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Compass className="w-4 h-4 text-amber-400" />
+                      <div>
+                        <div className="text-xs font-medium text-slate-200">吸附到地点中心经纬度</div>
+                        <div className="text-[10px] text-slate-400">
+                          行政中心坐标: [{Number(editingEntry.centerLng || editingEntry.lng).toFixed(4)}°, {Number(editingEntry.centerLat || editingEntry.lat).toFixed(4)}°]
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextSnapped = !editingEntry.isSnappedToCenter;
+                        if (nextSnapped && typeof editingEntry.centerLat === 'number') {
+                          updateEditingEntry({
+                            isSnappedToCenter: true,
+                            lat: editingEntry.centerLat,
+                            lng: editingEntry.centerLng
+                          });
+                        } else {
+                          updateEditingEntry({
+                            isSnappedToCenter: false
+                          });
+                        }
+                      }}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                        editingEntry.isSnappedToCenter
+                          ? 'bg-sky-600 text-white shadow-sm'
+                          : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {editingEntry.isSnappedToCenter ? '已开启吸附' : '吸附到中心'}
+                    </button>
+                  </div>
+
+                  {/* 4-Level Full Hierarchy Breadcrumb Banner */}
+                  <div className="bg-gradient-to-r from-sky-950/60 via-indigo-950/40 to-slate-950/60 border border-sky-500/30 p-3 rounded-xl space-y-1.5">
+                    <div className="text-[10px] uppercase font-bold text-sky-400 flex items-center gap-1 tracking-wider">
+                      <Globe className="w-3 h-3" /> 完整隶属层级解析 (大洲 - 国家 - 省份/城市 - 经纬度)
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap text-xs font-semibold text-slate-100">
+                      <span className="px-2 py-0.5 rounded bg-sky-900/60 text-sky-200 border border-sky-700/50">
+                        {editingEntry.continent || '未知大洲'}
+                      </span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <span className="px-2 py-0.5 rounded bg-indigo-900/60 text-indigo-200 border border-indigo-700/50">
+                        {editingEntry.country || '公海 / 未知领地'}
+                      </span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700">
+                        {editingEntry.province || editingEntry.city || '未指定省市'}
+                      </span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <span className="px-2 py-0.5 rounded bg-slate-900 text-amber-300 font-mono text-[11px] border border-amber-500/40">
+                        [{Number(editingEntry.lng || 0).toFixed(4)}°, {Number(editingEntry.lat || 0).toFixed(4)}°]
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Universal Color Note / Top Accent Strip for ALL cards */}
               <div className="bg-slate-950/60 border border-slate-800 p-3.5 rounded-xl space-y-2">

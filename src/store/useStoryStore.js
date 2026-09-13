@@ -109,8 +109,17 @@ export const useStoryStore = create((set, get) => ({
               currentTime: 2024
             },
             currentEpochId: data.mapData?.currentEpochId || 'epoch-modern',
-            epochs: data.mapData?.epochs || [],
-            locations: data.mapData?.locations || [],
+            epochs: (data.mapData?.epochs || []).map((ep) => {
+              if (Array.isArray(ep.locations)) return ep;
+              const rootLocs = data.mapData?.locations || [];
+              const matched = rootLocs.filter(
+                (l) => l.epochId === ep.id || (typeof l.year === 'number' && l.year >= ep.timeRange[0] && l.year <= ep.timeRange[1])
+              );
+              return { ...ep, locations: matched };
+            }),
+            locations: (data.mapData?.epochs || []).flatMap((e) => e.locations || []).length > 0
+              ? (data.mapData?.epochs || []).flatMap((e) => e.locations || [])
+              : (data.mapData?.locations || []),
             timeline: data.mapData?.timeline || []
           },
           settings: data.settings || get().settings,
@@ -630,46 +639,108 @@ export const useStoryStore = create((set, get) => ({
     await get().saveMapData({ ...current, epochs });
   },
 
-  addMapLocation: async (location) => {
+  saveEpochLocation: async (epochId, locationData) => {
     const current = get().mapData || {};
-    const locations = [...(current.locations || [])];
-    const newLoc = {
-      id: location.id || `loc-${Date.now().toString(36)}`,
-      name: location.name || '新地标地点',
-      lat: typeof location.lat === 'number' ? location.lat : 30.0,
-      lng: typeof location.lng === 'number' ? location.lng : 110.0,
-      type: location.type || 'city',
-      country: location.country || '',
-      region: location.region || '未分区',
-      year: typeof location.year === 'number' ? location.year : current.timelineSettings?.currentTime || 2024,
-      description: location.description || '',
-      icon: location.icon || 'Castle',
-      color: location.color || '#38bdf8'
+    const epochs = [...(current.epochs || [])];
+    const targetEpochId = epochId || current.currentEpochId || epochs[0]?.id || 'epoch-modern';
+    const epochIndex = epochs.findIndex((e) => e.id === targetEpochId);
+    if (epochIndex === -1) return null;
+
+    const epoch = { ...epochs[epochIndex] };
+    const epochLocs = [...(epoch.locations || [])];
+
+    const locId = locationData.id || `loc-${Date.now().toString(36)}`;
+    const normalizedLoc = {
+      ...locationData,
+      id: locId,
+      name: locationData.name || locationData.title || '新据点地点',
+      title: locationData.name || locationData.title || '新据点地点',
+      epochId: targetEpochId,
+      continent: locationData.continent || '未知大洲',
+      country: locationData.country || '',
+      province: locationData.province || locationData.region || '',
+      region: locationData.region || locationData.province || '',
+      city: locationData.city || locationData.province || '',
+      lat: typeof locationData.lat === 'number' ? locationData.lat : 30.0,
+      lng: typeof locationData.lng === 'number' ? locationData.lng : 110.0,
+      centerLat: typeof locationData.centerLat === 'number' ? locationData.centerLat : locationData.lat,
+      centerLng: typeof locationData.centerLng === 'number' ? locationData.centerLng : locationData.lng,
+      isSnappedToCenter: !!locationData.isSnappedToCenter,
+      description: locationData.description || locationData.summary || '',
+      summary: locationData.summary || locationData.description || '',
+      color: locationData.color || '#38bdf8',
+      tag: locationData.tag || '据点',
+      hierarchyText: locationData.hierarchyText || [locationData.continent, locationData.country, locationData.province || locationData.city].filter(Boolean).join(' · ')
     };
-    locations.push(newLoc);
-    await get().saveMapData({ ...current, locations });
-    set({ selectedMapLocationId: newLoc.id });
-    return newLoc;
+
+    const existingIdx = epochLocs.findIndex((l) => l.id === locId);
+    if (existingIdx >= 0) {
+      epochLocs[existingIdx] = normalizedLoc;
+    } else {
+      epochLocs.push(normalizedLoc);
+    }
+    epoch.locations = epochLocs;
+    epochs[epochIndex] = epoch;
+
+    const allLocations = epochs.flatMap((e) => e.locations || []);
+
+    await get().saveMapData({
+      ...current,
+      epochs,
+      locations: allLocations
+    });
+    set({ selectedMapLocationId: locId });
+    return normalizedLoc;
+  },
+
+  deleteEpochLocation: async (epochId, locationId) => {
+    const current = get().mapData || {};
+    const epochs = [...(current.epochs || [])];
+    const targetEpochId = epochId || current.currentEpochId;
+    const epochIndex = epochs.findIndex((e) => e.id === targetEpochId);
+    if (epochIndex === -1) return;
+
+    const epoch = { ...epochs[epochIndex] };
+    epoch.locations = (epoch.locations || []).filter((l) => l.id !== locationId);
+    epochs[epochIndex] = epoch;
+
+    const allLocations = epochs.flatMap((e) => e.locations || []);
+    const timeline = (current.timeline || []).map((t) =>
+      t.locationId === locationId ? { ...t, locationId: '' } : t
+    );
+    if (get().selectedMapLocationId === locationId) {
+      set({ selectedMapLocationId: null });
+    }
+    await get().saveMapData({
+      ...current,
+      epochs,
+      locations: allLocations,
+      timeline
+    });
+  },
+
+  addMapLocation: async (location) => {
+    return await get().saveEpochLocation(location.epochId, location);
   },
 
   updateMapLocation: async (id, patch) => {
     const current = get().mapData || {};
-    const locations = (current.locations || []).map((loc) =>
-      loc.id === id ? { ...loc, ...patch } : loc
-    );
-    await get().saveMapData({ ...current, locations });
+    for (const ep of current.epochs || []) {
+      const found = (ep.locations || []).find((l) => l.id === id);
+      if (found) {
+        return await get().saveEpochLocation(ep.id, { ...found, ...patch });
+      }
+    }
   },
 
   deleteMapLocation: async (id) => {
     const current = get().mapData || {};
-    const locations = (current.locations || []).filter((loc) => loc.id !== id);
-    const timeline = (current.timeline || []).map((t) =>
-      t.locationId === id ? { ...t, locationId: '' } : t
-    );
-    if (get().selectedMapLocationId === id) {
-      set({ selectedMapLocationId: null });
+    for (const ep of current.epochs || []) {
+      const found = (ep.locations || []).find((l) => l.id === id);
+      if (found) {
+        return await get().deleteEpochLocation(ep.id, id);
+      }
     }
-    await get().saveMapData({ ...current, locations, timeline });
   },
 
   addTimelineEvent: async (event) => {

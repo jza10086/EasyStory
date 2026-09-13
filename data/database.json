@@ -27,6 +27,13 @@
       "icon": "History",
       "isCharacterType": false,
       "description": "重大历史转折、政变纪事与编年史大纲"
+    },
+    {
+      "id": "locations",
+      "name": "地理与据点",
+      "icon": "MapPin",
+      "isLocationType": true,
+      "description": "各历史时期的名城要塞、遗迹港口与地理地标"
     }
   ],
   "entries": [

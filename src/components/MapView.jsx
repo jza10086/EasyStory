@@ -16,6 +16,7 @@ import {
   getPreloadedProvinceLabels,
   getPreloadedContinents
 } from '../services/geoPreloader';
+import { reverseGeocode } from '../services/geoHierarchyService';
 import {
   Compass,
   Clock,
@@ -24,7 +25,13 @@ import {
   Palette,
   RotateCcw,
   Edit2,
-  X
+  X,
+  MapPin,
+  Globe,
+  Trash2,
+  Check,
+  ExternalLink,
+  ChevronRight
 } from 'lucide-react';
 
 const COLOR_PRESETS = [
@@ -421,6 +428,376 @@ function PlateEditorModal({ target, currentEpoch, onClose, onSave }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Create/Edit Location Modal (Right-click "新建地点" / Edit dialog)
+// ---------------------------------------------------------------------------
+function CreateLocationModal({ data, currentEpoch, epochs, onClose, onSave }) {
+  const [form, setForm] = useState(() => ({
+    title: data.title || data.name || '',
+    epochId: data.epochId || currentEpoch?.id || epochs[0]?.id || 'epoch-ancient',
+    continent: data.continent || '亚洲',
+    country: data.country || '',
+    province: data.province || '',
+    city: data.city || '',
+    rawLng: data.rawLng ?? data.lng,
+    rawLat: data.rawLat ?? data.lat,
+    centerLng: data.centerLng ?? data.lng,
+    centerLat: data.centerLat ?? data.lat,
+    lng: data.lng,
+    lat: data.lat,
+    isSnappedToCenter: !!data.isSnappedToCenter,
+    hierarchyText: data.hierarchyText || '',
+    tag: data.tags?.[0] || data.tag || '据点',
+    color: data.color || '#38bdf8',
+    description: data.description || ''
+  }));
+
+  const handleToggleSnap = () => {
+    setForm((prev) => {
+      const nextSnapped = !prev.isSnappedToCenter;
+      if (nextSnapped && typeof prev.centerLng === 'number' && typeof prev.centerLat === 'number') {
+        return {
+          ...prev,
+          isSnappedToCenter: true,
+          lng: prev.centerLng,
+          lat: prev.centerLat
+        };
+      } else {
+        return {
+          ...prev,
+          isSnappedToCenter: false,
+          lng: prev.rawLng ?? prev.lng,
+          lat: prev.rawLat ?? prev.lat
+        };
+      }
+    });
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!form.title.trim()) {
+      alert('请填写地点名称');
+      return;
+    }
+    onSave({
+      ...data,
+      id: data.id || `loc-${Date.now().toString(36)}`,
+      name: form.title.trim(),
+      title: form.title.trim(),
+      epochId: form.epochId,
+      continent: form.continent,
+      country: form.country,
+      province: form.province,
+      city: form.city,
+      lat: form.lat,
+      lng: form.lng,
+      centerLat: form.centerLat,
+      centerLng: form.centerLng,
+      isSnappedToCenter: form.isSnappedToCenter,
+      hierarchyText: form.hierarchyText,
+      tag: form.tag,
+      tags: [form.tag],
+      color: form.color,
+      description: form.description.trim(),
+      summary: form.description.trim()
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn select-text"
+      onClick={onClose}
+    >
+      <div
+        className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col animate-scaleUp"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div className="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-950/60 select-none">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-400">
+              <MapPin className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">
+                {data.id ? '编辑地图地点' : '在当前右键坐标新建地点'}
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                已自动根据经纬度反查推算地理隶属层级
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Modal Form */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs">
+          {/* 4-Level Full Hierarchy Display Banner */}
+          <div className="bg-gradient-to-r from-sky-950/60 via-indigo-950/40 to-slate-950/60 border border-sky-500/30 p-3 rounded-xl space-y-1.5">
+            <div className="text-[10px] uppercase font-bold text-sky-400 flex items-center gap-1 tracking-wider">
+              <Globe className="w-3 h-3" /> 逆地理编码推算结果 (大洲 - 国家 - 省份/城市 - 经纬度)
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap font-semibold text-slate-100">
+              <span className="px-2 py-0.5 rounded bg-sky-900/60 text-sky-200 border border-sky-700/50">
+                {form.continent || '未知大洲'}
+              </span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <span className="px-2 py-0.5 rounded bg-indigo-900/60 text-indigo-200 border border-indigo-700/50">
+                {form.country || '公海 / 未知水域'}
+              </span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700">
+                {form.province || form.city || '未指定省市'}
+              </span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <span className="px-2 py-0.5 rounded bg-slate-900 text-amber-300 font-mono text-[11px] border border-amber-500/40">
+                [{Number(form.lng).toFixed(4)}°, {Number(form.lat).toFixed(4)}°]
+              </span>
+            </div>
+          </div>
+
+          {/* Location Name & Epoch Selection Row */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-medium text-slate-300 mb-1">
+                地点名称 <span className="text-rose-400">*</span>
+              </label>
+              <input
+                type="text"
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                placeholder="例如：以太帝都·天穹圣座"
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-sky-500"
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label className="block font-medium text-slate-300 mb-1">
+                所属历史纪元时期 <span className="text-rose-400">*</span>
+              </label>
+              <select
+                value={form.epochId}
+                onChange={(e) => setForm({ ...form, epochId: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-sky-500"
+              >
+                {epochs.map((ep) => (
+                  <option key={ep.id} value={ep.id}>
+                    {ep.name} ({ep.timeRange?.[0]} ~ {ep.timeRange?.[1]}年)
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Coordinate Snapping Toggle Box */}
+          <div className="bg-slate-950/70 border border-slate-800 p-3 rounded-xl flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Compass className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <div className="text-slate-200 font-medium">经纬度吸附控制</div>
+                <div className="text-[10px] text-slate-400">
+                  {form.isSnappedToCenter
+                    ? `已吸附至行政中心: [${form.centerLng}°, ${form.centerLat}°]`
+                    : `保持右键点击的精确坐标: [${form.rawLng}°, ${form.rawLat}°]`}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleToggleSnap}
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all text-xs flex items-center gap-1.5 ${
+                form.isSnappedToCenter
+                  ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+              }`}
+            >
+              {form.isSnappedToCenter ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>已吸附中心</span>
+                </>
+              ) : (
+                <span>吸附至地点中心</span>
+              )}
+            </button>
+          </div>
+
+          {/* Tag & Color Selection */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-medium text-slate-300 mb-1">据点类型标签</label>
+              <select
+                value={form.tag}
+                onChange={(e) => setForm({ ...form, tag: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-sky-500"
+              >
+                <option value="据点">据点</option>
+                <option value="帝国首都">帝国首都</option>
+                <option value="远古遗迹">远古遗迹</option>
+                <option value="军事要塞">军事要塞</option>
+                <option value="自由港口">自由港口</option>
+                <option value="神圣教会">神圣教会</option>
+                <option value="秘境禁地">秘境禁地</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-medium text-slate-300 mb-1">标记标识颜色</label>
+              <div className="flex items-center gap-1.5 pt-1">
+                {COLOR_PRESETS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setForm({ ...form, color })}
+                    style={{ backgroundColor: color }}
+                    className={`w-6 h-6 rounded-full transition-transform ${
+                      form.color === color
+                        ? 'scale-115 ring-2 ring-white ring-offset-2 ring-offset-slate-900 shadow-sm'
+                        : 'opacity-80 hover:opacity-100 hover:scale-105'
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Description Textarea */}
+          <div>
+            <label className="block font-medium text-slate-300 mb-1">
+              简要设定与剧情描述
+            </label>
+            <textarea
+              rows={3}
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="记录该地点在当前历史时期的势力背景、故事伏笔或地理风貌..."
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-sky-500 resize-none"
+            />
+          </div>
+
+          {/* Modal Footer */}
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800 select-none">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl font-medium transition-colors"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-semibold shadow-md shadow-sky-500/20 transition-all flex items-center gap-1.5"
+            >
+              <Check className="w-4 h-4" />
+              <span>确立并保存地点</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Singleton Location Detail Popover on Map
+// ---------------------------------------------------------------------------
+function LocationDetailCard({ location, currentEpoch, onClose, onEdit, onDelete, onOpenDatabase }) {
+  if (!location) return null;
+  const themeColor = location.color || '#38bdf8';
+
+  return (
+    <div className="absolute top-16 right-6 z-30 w-80 bg-slate-900/95 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl p-4 text-xs text-slate-200 select-none animate-fadeIn space-y-3">
+      {/* Top accent line */}
+      <div className="absolute top-0 left-0 right-0 h-1 rounded-t-2xl" style={{ backgroundColor: themeColor }} />
+
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 pt-1">
+        <div className="flex items-center gap-2.5">
+          <div
+            className="w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-md shrink-0"
+            style={{ backgroundColor: themeColor }}
+          >
+            <MapPin className="w-4 h-4 drop-shadow" />
+          </div>
+          <div>
+            <h4 className="font-bold text-sm text-white flex items-center gap-1.5">
+              <span>{location.name || location.title}</span>
+            </h4>
+            <span className="text-[10px] text-amber-300 font-medium">
+              {currentEpoch?.name || '当前时期'}
+            </span>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* 4-Level Full Hierarchy Display */}
+      <div className="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800 space-y-1">
+        <div className="text-[11px] text-sky-300 font-semibold flex items-center gap-1.5">
+          <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+          <span className="truncate">
+            {location.hierarchyText || [location.continent, location.country, location.province || location.city].filter(Boolean).join(' · ')}
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+          <span>坐标: [{Number(location.lng).toFixed(4)}°, {Number(location.lat).toFixed(4)}°]</span>
+          {location.isSnappedToCenter && (
+            <span className="px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
+              中心吸附
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Description */}
+      <p className="text-slate-300 leading-relaxed max-h-24 overflow-y-auto">
+        {location.description || location.summary || '暂无详细设定描述...'}
+      </p>
+
+      {/* Action Buttons */}
+      <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+        <button
+          onClick={() => onOpenDatabase(location)}
+          className="flex-1 flex items-center justify-center gap-1.5 bg-sky-600/30 hover:bg-sky-600 text-sky-200 hover:text-white py-1.5 px-2.5 rounded-xl border border-sky-500/40 transition-colors font-medium shadow-sm text-[11px]"
+          title="在资料库地点档案中查看并编辑完整 Markdown 设定"
+        >
+          <ExternalLink className="w-3 h-3" />
+          <span>资料库中打开</span>
+        </button>
+
+        <button
+          onClick={() => onEdit(location)}
+          className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors"
+          title="编辑此地点"
+        >
+          <Edit2 className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={() => onDelete(location)}
+          className="p-1.5 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors"
+          title="删除此地点"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MapView({ isActive = true }) {
   const mapData = useStoryStore((s) => s.mapData) || {};
   const setTimelineBounds = useStoryStore((s) => s.setTimelineBounds);
@@ -428,6 +805,12 @@ export default function MapView({ isActive = true }) {
   const selectEpoch = useStoryStore((s) => s.selectEpoch);
   const setPlateInfo = useStoryStore((s) => s.setPlateInfo);
   const setActiveWorkspace = useStoryStore((s) => s.setActiveWorkspace);
+
+  const saveEpochLocation = useStoryStore((s) => s.saveEpochLocation);
+  const deleteEpochLocation = useStoryStore((s) => s.deleteEpochLocation);
+  const selectedMapLocationId = useStoryStore((s) => s.selectedMapLocationId);
+  const setSelectedMapLocationId = useStoryStore((s) => s.setSelectedMapLocationId);
+  const setActiveDatabaseCategory = useStoryStore((s) => s.setActiveDatabaseCategory);
 
   const timelineSettings = mapData.timelineSettings || {
     minYear: -1000,
@@ -636,6 +1019,11 @@ export default function MapView({ isActive = true }) {
   const [zoomLevel, setZoomLevel] = useState(1.8);
   const [isTimelineOpen, setIsTimelineOpen] = useState(true);
   const [editingPlateTarget, setEditingPlateTarget] = useState(null);
+
+  // Location card and creation modal states
+  const [creatingLocationData, setCreatingLocationData] = useState(null);
+  const [activeLocationCard, setActiveLocationCard] = useState(null);
+  const locationMarkersRef = useRef([]);
 
   // Singleton hover card
   const [hoveredPlate, setHoveredPlate] = useState(null);
@@ -1242,6 +1630,46 @@ export default function MapView({ isActive = true }) {
       }
     });
 
+    // Right-click contextmenu handler for establishing a new location at clicked coordinates
+    map.on('contextmenu', (e) => {
+      e.preventDefault();
+      const { lng, lat } = e.lngLat;
+      let normalizedLng = (lng + 180) % 360;
+      if (normalizedLng < 0) normalizedLng += 360;
+      normalizedLng -= 180;
+      const normalizedLat = Math.max(-85, Math.min(85, lat));
+
+      const geoInfo = reverseGeocode(normalizedLng, normalizedLat);
+      const clickedLng = parseFloat(normalizedLng.toFixed(4));
+      const clickedLat = parseFloat(normalizedLat.toFixed(4));
+      const centerLng = parseFloat((geoInfo.centerLng ?? clickedLng).toFixed(4));
+      const centerLat = parseFloat((geoInfo.centerLat ?? clickedLat).toFixed(4));
+
+      const suggestedName = geoInfo.province || geoInfo.country || '新建立地点';
+
+      setCreatingLocationData({
+        title: suggestedName,
+        name: suggestedName,
+        epochId: currentEpochRef.current?.id || 'epoch-ancient',
+        continent: geoInfo.continent,
+        country: geoInfo.country,
+        province: geoInfo.province,
+        city: geoInfo.city,
+        rawLng: clickedLng,
+        rawLat: clickedLat,
+        lng: clickedLng,
+        lat: clickedLat,
+        centerLng: centerLng,
+        centerLat: centerLat,
+        isSnappedToCenter: false,
+        hierarchyText: geoInfo.hierarchyText,
+        tags: ['据点'],
+        color: '#38bdf8',
+        description: '',
+        summary: ''
+      });
+    });
+
     mapInstanceRef.current = map;
 
     return () => {
@@ -1288,6 +1716,83 @@ export default function MapView({ isActive = true }) {
       applyAllEpochs
     });
     setEditingPlateTarget(null);
+  };
+
+  // Synchronize MapLibre Markers for currentEpoch.locations
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !isMapLoadedRef.current) return;
+
+    // Remove old markers
+    locationMarkersRef.current.forEach((marker) => marker.remove());
+    locationMarkersRef.current = [];
+
+    const locations = currentEpoch?.locations || [];
+
+    locations.forEach((loc) => {
+      if (typeof loc.lng !== 'number' || typeof loc.lat !== 'number') return;
+
+      const el = document.createElement('div');
+      el.className = 'location-marker-pin group relative cursor-pointer select-none';
+      el.style.width = '28px';
+      el.style.height = '36px';
+
+      const isSelected = selectedMapLocationId === loc.id;
+      const markerColor = loc.color || '#38bdf8';
+
+      el.innerHTML = `
+        <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
+          <div style="width: 28px; height: 28px; border-radius: 50%; background-color: ${markerColor}; border: 2px solid #ffffff; box-shadow: 0 0 10px ${markerColor}, 0 2px 6px rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; transform: ${isSelected ? 'scale(1.25)' : 'scale(1)'}; transition: transform 0.2s ease;">
+            <svg style="width: 14px; height: 14px; fill: white;" viewBox="0 0 24 24">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+            </svg>
+          </div>
+          <div style="width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid ${markerColor}; margin-top: -1px;"></div>
+          <div style="position: absolute; bottom: 32px; background: rgba(15, 23, 42, 0.92); color: #f8fafc; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.4); white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.5); pointer-events: none;">
+            ${loc.name || loc.title || '据点'}
+          </div>
+        </div>
+      `;
+
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setSelectedMapLocationId(loc.id);
+        setActiveLocationCard(loc);
+      });
+
+      try {
+        const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+          .setLngLat([loc.lng, loc.lat])
+          .addTo(map);
+
+        locationMarkersRef.current.push(marker);
+      } catch (err) {
+        console.warn('Failed to add location marker:', err);
+      }
+    });
+  }, [currentEpoch, currentEpoch?.locations, selectedMapLocationId, setSelectedMapLocationId]);
+
+  // Fly to location when selected
+  useEffect(() => {
+    if (!selectedMapLocationId || !mapInstanceRef.current || !isMapLoadedRef.current) return;
+    const loc = currentEpoch?.locations?.find((l) => l.id === selectedMapLocationId);
+    if (loc && typeof loc.lng === 'number' && typeof loc.lat === 'number') {
+      setActiveLocationCard(loc);
+      mapInstanceRef.current.flyTo({
+        center: [loc.lng, loc.lat],
+        zoom: Math.max(mapInstanceRef.current.getZoom(), 5.5),
+        speed: 1.2,
+        curve: 1.42,
+        essential: true
+      });
+    }
+  }, [selectedMapLocationId, currentEpoch]);
+
+  const handleOpenDatabaseForLocation = (loc) => {
+    setActiveLocationCard(null);
+    setSelectedMapLocationId(loc.id);
+    setActiveDatabaseCategory('locations');
+    setActiveWorkspace('database');
   };
 
   return (
@@ -1394,7 +1899,29 @@ export default function MapView({ isActive = true }) {
           }}
         />
 
-        {/* Selected Location Inspector Drawer */}
+        {/* Selected Location Card Popover on Map */}
+        {activeLocationCard && (
+          <LocationDetailCard
+            location={activeLocationCard}
+            currentEpoch={currentEpoch}
+            onClose={() => {
+              setActiveLocationCard(null);
+              setSelectedMapLocationId(null);
+            }}
+            onEdit={(loc) => {
+              setActiveLocationCard(null);
+              setCreatingLocationData(loc);
+            }}
+            onDelete={async (loc) => {
+              if (confirm(`确定要删除“${loc.name || loc.title}”地点吗？`)) {
+                await deleteEpochLocation(loc.epochId || currentEpoch?.id, loc.id);
+                setActiveLocationCard(null);
+                setSelectedMapLocationId(null);
+              }
+            }}
+            onOpenDatabase={handleOpenDatabaseForLocation}
+          />
+        )}
       </div>
 
       <PlateHoverCard plate={hoveredPlate} cardRef={plateHoverCardRef} />
@@ -1405,6 +1932,21 @@ export default function MapView({ isActive = true }) {
           currentEpoch={currentEpoch}
           onClose={() => setEditingPlateTarget(null)}
           onSave={handleSavePlate}
+        />
+      )}
+
+      {creatingLocationData && (
+        <CreateLocationModal
+          data={creatingLocationData}
+          currentEpoch={currentEpoch}
+          epochs={epochs}
+          onClose={() => setCreatingLocationData(null)}
+          onSave={async (locData) => {
+            await saveEpochLocation(locData.epochId, locData);
+            setCreatingLocationData(null);
+            setActiveLocationCard(locData);
+            setSelectedMapLocationId(locData.id);
+          }}
         />
       )}
 
