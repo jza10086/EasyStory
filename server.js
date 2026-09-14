@@ -15,9 +15,11 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Directories
 const DATA_DIR = path.join(__dirname, 'data');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
-const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
+const PROJECTS_DIR = path.join(DATA_DIR, 'projects');
+const PROJECTS_FILE = path.join(DATA_DIR, 'projects.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
-[DATA_DIR, IMAGES_DIR, BACKUPS_DIR].forEach(dir => {
+[DATA_DIR, IMAGES_DIR, PROJECTS_DIR].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -25,14 +27,6 @@ const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 
 // Serve uploaded images
 app.use('/uploads', express.static(IMAGES_DIR));
-
-// File paths
-const STORY_FILE = path.join(DATA_DIR, 'story_graph.json');
-const CHARACTERS_FILE = path.join(DATA_DIR, 'characters.json');
-const WORLD_FILE = path.join(DATA_DIR, 'world_lore.md');
-const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
-const DATABASE_FILE = path.join(DATA_DIR, 'database.json');
-const MAP_FILE = path.join(DATA_DIR, 'map_data.json');
 
 // Default initial data if files do not exist
 const defaultMapData = {
@@ -234,49 +228,247 @@ const defaultSettings = {
   temperature: 0.7
 };
 
-// Initialize default files if missing
-function initFiles() {
-  if (!fs.existsSync(STORY_FILE)) {
-    fs.writeFileSync(STORY_FILE, JSON.stringify(defaultStory, null, 2), 'utf-8');
+// ---------------------------------------------------------------------------
+// Multi-Project Management & Legacy Migration
+// ---------------------------------------------------------------------------
+
+function getProjectsRegistry() {
+  if (!fs.existsSync(PROJECTS_FILE)) {
+    return null;
   }
-  if (!fs.existsSync(CHARACTERS_FILE)) {
-    fs.writeFileSync(CHARACTERS_FILE, JSON.stringify(defaultCharacters, null, 2), 'utf-8');
-  }
-  if (!fs.existsSync(WORLD_FILE)) {
-    fs.writeFileSync(WORLD_FILE, defaultWorldLore, 'utf-8');
-  }
-  if (!fs.existsSync(SETTINGS_FILE)) {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(defaultSettings, null, 2), 'utf-8');
-  }
-  if (!fs.existsSync(MAP_FILE)) {
-    fs.writeFileSync(MAP_FILE, JSON.stringify(defaultMapData, null, 2), 'utf-8');
+  try {
+    return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf-8'));
+  } catch (err) {
+    console.error('Error reading projects.json:', err);
+    return null;
   }
 }
 
-initFiles();
+function saveProjectsRegistry(registry) {
+  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(registry, null, 2), 'utf-8');
+}
 
-// Helper to create rolling backup of story
-function backupStory() {
+function migrateAndInitProjects() {
+  let registry = getProjectsRegistry();
+
+  if (!registry || !Array.isArray(registry.projects) || registry.projects.length === 0) {
+    console.log('✨ 检测到首次开启多企划模式，正在无缝平移现有数据至「默认企划」...');
+    const defaultProjectId = 'default';
+    const defaultProjDir = path.join(PROJECTS_DIR, defaultProjectId);
+    if (!fs.existsSync(defaultProjDir)) {
+      fs.mkdirSync(defaultProjDir, { recursive: true });
+    }
+
+    const legacyFiles = [
+      { name: 'story_graph.json', defaultContent: () => JSON.stringify(defaultStory, null, 2) },
+      { name: 'characters.json', defaultContent: () => JSON.stringify(defaultCharacters, null, 2) },
+      { name: 'world_lore.md', defaultContent: () => defaultWorldLore },
+      { name: 'database.json', defaultContent: () => JSON.stringify({ categories: [], entries: [] }, null, 2) },
+      { name: 'map_data.json', defaultContent: () => JSON.stringify(defaultMapData, null, 2) }
+    ];
+
+    legacyFiles.forEach(({ name, defaultContent }) => {
+      const legacyPath = path.join(DATA_DIR, name);
+      const targetPath = path.join(defaultProjDir, name);
+
+      if (fs.existsSync(legacyPath)) {
+        fs.copyFileSync(legacyPath, targetPath);
+      } else if (!fs.existsSync(targetPath)) {
+        fs.writeFileSync(targetPath, defaultContent(), 'utf-8');
+      }
+    });
+
+    const legacyBackups = path.join(DATA_DIR, 'backups');
+    const targetBackups = path.join(defaultProjDir, 'backups');
+    if (fs.existsSync(legacyBackups)) {
+      if (!fs.existsSync(targetBackups)) {
+        fs.mkdirSync(targetBackups, { recursive: true });
+      }
+      try {
+        const files = fs.readdirSync(legacyBackups);
+        files.forEach((f) => {
+          fs.copyFileSync(path.join(legacyBackups, f), path.join(targetBackups, f));
+        });
+      } catch (e) {
+        console.warn('Backup copy error:', e);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const defaultMeta = {
+      id: defaultProjectId,
+      name: '以太纪元 · 崩塌圣座',
+      description: '默认小说剧本企划（包含世界地图与设定资料库）',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    fs.writeFileSync(path.join(defaultProjDir, 'project.json'), JSON.stringify(defaultMeta, null, 2), 'utf-8');
+
+    registry = {
+      activeProjectId: defaultProjectId,
+      projects: [defaultMeta]
+    };
+    saveProjectsRegistry(registry);
+    console.log('✅ 数据平移完成，默认企划已成功初始化！');
+  }
+
+  if (!registry.activeProjectId || !registry.projects.find((p) => p.id === registry.activeProjectId)) {
+    registry.activeProjectId = registry.projects[0]?.id || 'default';
+    saveProjectsRegistry(registry);
+  }
+
+  if (!fs.existsSync(SETTINGS_FILE)) {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(defaultSettings, null, 2), 'utf-8');
+  }
+
+  return registry;
+}
+
+// Initialize registry & migration on startup
+migrateAndInitProjects();
+
+function getActiveProjectId() {
+  const registry = getProjectsRegistry() || migrateAndInitProjects();
+  return registry.activeProjectId || registry.projects[0]?.id || 'default';
+}
+
+function getProjectDir(projectId) {
+  const pid = projectId || getActiveProjectId();
+  const dir = path.join(PROJECTS_DIR, pid);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+function getProjectFilePath(filename, projectId = null) {
+  const dir = getProjectDir(projectId);
+  return path.join(dir, filename);
+}
+
+function getProjectBackupsDir(projectId = null) {
+  const dir = path.join(getProjectDir(projectId), 'backups');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+function touchProjectUpdated(projectId = null) {
+  const pid = projectId || getActiveProjectId();
+  const now = new Date().toISOString();
+  const registry = getProjectsRegistry();
+  if (registry) {
+    const p = registry.projects.find((x) => x.id === pid);
+    if (p) {
+      p.updatedAt = now;
+      saveProjectsRegistry(registry);
+    }
+  }
+  const metaFile = getProjectFilePath('project.json', pid);
+  if (fs.existsSync(metaFile)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
+      meta.updatedAt = now;
+      fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2), 'utf-8');
+    } catch {}
+  }
+}
+
+function getProjectSummary(pMeta) {
+  const pid = pMeta.id;
+  const dir = getProjectDir(pid);
+  let nodeCount = 0;
+  let entryCount = 0;
+  let epochCount = 0;
+
   try {
-    if (fs.existsSync(STORY_FILE)) {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupPath = path.join(BACKUPS_DIR, `story_graph_${timestamp}.json`);
-      fs.copyFileSync(STORY_FILE, backupPath);
+    const storyFile = path.join(dir, 'story_graph.json');
+    if (fs.existsSync(storyFile)) {
+      const data = JSON.parse(fs.readFileSync(storyFile, 'utf-8'));
+      nodeCount = (data.nodes || []).length;
+    }
+  } catch {}
 
-      // Keep only latest 20 backups
-      const files = fs.readdirSync(BACKUPS_DIR)
-        .filter(f => f.startsWith('story_graph_') && f.endsWith('.json'))
-        .map(f => ({ name: f, time: fs.statSync(path.join(BACKUPS_DIR, f)).mtime.getTime() }))
+  try {
+    const dbFile = path.join(dir, 'database.json');
+    if (fs.existsSync(dbFile)) {
+      const data = JSON.parse(fs.readFileSync(dbFile, 'utf-8'));
+      entryCount = (data.entries || []).length;
+    }
+  } catch {}
+
+  try {
+    const mapFile = path.join(dir, 'map_data.json');
+    if (fs.existsSync(mapFile)) {
+      const data = JSON.parse(fs.readFileSync(mapFile, 'utf-8'));
+      epochCount = (data.epochs || []).length;
+    }
+  } catch {}
+
+  return {
+    ...pMeta,
+    nodeCount,
+    entryCount,
+    epochCount
+  };
+}
+
+// Rolling backup helpers for project
+function backupStory(projectId = null) {
+  try {
+    const storyFile = getProjectFilePath('story_graph.json', projectId);
+    const backupsDir = getProjectBackupsDir(projectId);
+    if (fs.existsSync(storyFile)) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(backupsDir, `story_graph_${timestamp}.json`);
+      fs.copyFileSync(storyFile, backupPath);
+
+      const files = fs
+        .readdirSync(backupsDir)
+        .filter((f) => f.startsWith('story_graph_') && f.endsWith('.json'))
+        .map((f) => ({ name: f, time: fs.statSync(path.join(backupsDir, f)).mtime.getTime() }))
         .sort((a, b) => b.time - a.time);
 
       if (files.length > 20) {
-        files.slice(20).forEach(f => {
-          try { fs.unlinkSync(path.join(BACKUPS_DIR, f.name)); } catch (e) {}
+        files.slice(20).forEach((f) => {
+          try {
+            fs.unlinkSync(path.join(backupsDir, f.name));
+          } catch (e) {}
         });
       }
     }
   } catch (err) {
-    console.error('Backup error:', err);
+    console.error('Backup story error:', err);
+  }
+}
+
+function backupDatabase(projectId = null) {
+  try {
+    const dbFile = getProjectFilePath('database.json', projectId);
+    const backupsDir = getProjectBackupsDir(projectId);
+    if (fs.existsSync(dbFile)) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(backupsDir, `database_${timestamp}.json`);
+      fs.copyFileSync(dbFile, backupPath);
+
+      const files = fs
+        .readdirSync(backupsDir)
+        .filter((f) => f.startsWith('database_') && f.endsWith('.json'))
+        .map((f) => ({ name: f, time: fs.statSync(path.join(backupsDir, f)).mtime.getTime() }))
+        .sort((a, b) => b.time - a.time);
+
+      if (files.length > 20) {
+        files.slice(20).forEach((f) => {
+          try {
+            fs.unlinkSync(path.join(backupsDir, f.name));
+          } catch (e) {}
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Backup database error:', err);
   }
 }
 
@@ -304,49 +496,296 @@ const upload = multer({
   }
 });
 
-// API Routes
+// ---------------------------------------------------------------------------
+// API Routes: Project Management
+// ---------------------------------------------------------------------------
 
-// Helper to backup database
-function backupDatabase() {
+// 1. List all projects
+app.get('/api/projects', (req, res) => {
   try {
-    if (fs.existsSync(DATABASE_FILE)) {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupPath = path.join(BACKUPS_DIR, `database_${timestamp}.json`);
-      fs.copyFileSync(DATABASE_FILE, backupPath);
-
-      const files = fs.readdirSync(BACKUPS_DIR)
-        .filter(f => f.startsWith('database_') && f.endsWith('.json'))
-        .map(f => ({ name: f, time: fs.statSync(path.join(BACKUPS_DIR, f)).mtime.getTime() }))
-        .sort((a, b) => b.time - a.time);
-
-      if (files.length > 20) {
-        files.slice(20).forEach(f => {
-          try { fs.unlinkSync(path.join(BACKUPS_DIR, f.name)); } catch (e) {}
-        });
-      }
-    }
+    const registry = migrateAndInitProjects();
+    const summaries = registry.projects.map((p) => getProjectSummary(p));
+    res.json({
+      success: true,
+      activeProjectId: registry.activeProjectId,
+      projects: summaries
+    });
   } catch (err) {
-    console.error('Backup database error:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
-}
+});
 
-// 1. Get full project
-app.get('/api/project', (req, res) => {
+// 2. Create new project
+app.post('/api/projects', (req, res) => {
   try {
-    initFiles();
-    const story = JSON.parse(fs.readFileSync(STORY_FILE, 'utf-8'));
-    const characters = JSON.parse(fs.readFileSync(CHARACTERS_FILE, 'utf-8'));
-    const worldLore = fs.readFileSync(WORLD_FILE, 'utf-8');
-    const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
-    const database = fs.existsSync(DATABASE_FILE)
-      ? JSON.parse(fs.readFileSync(DATABASE_FILE, 'utf-8'))
-      : { categories: [], entries: [] };
-    const mapData = fs.existsSync(MAP_FILE)
-      ? JSON.parse(fs.readFileSync(MAP_FILE, 'utf-8'))
-      : defaultMapData;
+    const { name, description, template } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, error: '企划名称不能为空' });
+    }
+
+    const registry = migrateAndInitProjects();
+    const newId = `proj-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+    const newDir = path.join(PROJECTS_DIR, newId);
+    fs.mkdirSync(newDir, { recursive: true });
+
+    const now = new Date().toISOString();
+    const meta = {
+      id: newId,
+      name: name.trim(),
+      description: (description || '').trim(),
+      createdAt: now,
+      updatedAt: now
+    };
+
+    fs.writeFileSync(path.join(newDir, 'project.json'), JSON.stringify(meta, null, 2), 'utf-8');
+
+    if (template === 'default') {
+      fs.writeFileSync(path.join(newDir, 'story_graph.json'), JSON.stringify(defaultStory, null, 2), 'utf-8');
+      fs.writeFileSync(path.join(newDir, 'characters.json'), JSON.stringify(defaultCharacters, null, 2), 'utf-8');
+      fs.writeFileSync(path.join(newDir, 'world_lore.md'), defaultWorldLore, 'utf-8');
+      fs.writeFileSync(
+        path.join(newDir, 'database.json'),
+        JSON.stringify(
+          {
+            categories: [
+              { id: 'characters', name: '人物档案', icon: 'Users', description: '登场角色及好感度记录', isCharacterType: true },
+              { id: 'world', name: '地理与势力', icon: 'Globe', description: '国家、城邦与地缘势力' },
+              { id: 'lore', name: '世界观设定', icon: 'BookOpen', description: '历史源流、能量体系与禁忌' },
+              { id: 'events', name: '历史纪事', icon: 'Clock', description: '时空变迁、战役与关键转折', isEventType: true }
+            ],
+            entries: []
+          },
+          null,
+          2
+        ),
+        'utf-8'
+      );
+      fs.writeFileSync(path.join(newDir, 'map_data.json'), JSON.stringify(defaultMapData, null, 2), 'utf-8');
+    } else {
+      fs.writeFileSync(path.join(newDir, 'story_graph.json'), JSON.stringify({ nodes: [], edges: [] }, null, 2), 'utf-8');
+      fs.writeFileSync(path.join(newDir, 'characters.json'), JSON.stringify([], null, 2), 'utf-8');
+      fs.writeFileSync(
+        path.join(newDir, 'world_lore.md'),
+        `# ${meta.name} · 世界观设定\n\n在此记录该企划的核心世界观、势力设定与故事规则...\n`,
+        'utf-8'
+      );
+      fs.writeFileSync(
+        path.join(newDir, 'database.json'),
+        JSON.stringify(
+          {
+            categories: [
+              { id: 'characters', name: '人物档案', icon: 'Users', description: '登场角色及好感度记录', isCharacterType: true },
+              { id: 'factions', name: '势力阵营', icon: 'Shield', description: '组织、派系与国家地缘' },
+              { id: 'world', name: '地理据点', icon: 'Globe', description: '大陆、板块与秘境据点' },
+              { id: 'items', name: '宝物道具', icon: 'Sparkles', description: '神秘圣遗物、兵刃与法器' },
+              { id: 'events', name: '历史纪事', icon: 'Clock', description: '重大历史战役与时空纪事', isEventType: true }
+            ],
+            entries: []
+          },
+          null,
+          2
+        ),
+        'utf-8'
+      );
+      fs.writeFileSync(path.join(newDir, 'map_data.json'), JSON.stringify(defaultMapData, null, 2), 'utf-8');
+    }
+
+    registry.projects.push(meta);
+    registry.activeProjectId = newId;
+    saveProjectsRegistry(registry);
 
     res.json({
       success: true,
+      project: getProjectSummary(meta),
+      activeProjectId: newId,
+      message: `企划「${meta.name}」创建成功`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Switch active project
+app.post('/api/projects/switch', (req, res) => {
+  try {
+    const { projectId } = req.body;
+    const registry = migrateAndInitProjects();
+    const target = registry.projects.find((p) => p.id === projectId);
+    if (!target) {
+      return res.status(404).json({ success: false, error: '指定企划不存在' });
+    }
+    registry.activeProjectId = projectId;
+    saveProjectsRegistry(registry);
+    res.json({
+      success: true,
+      activeProjectId: projectId,
+      project: getProjectSummary(target),
+      message: `已切换至企划「${target.name}」`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. Update project metadata
+app.put('/api/projects/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description } = req.body;
+    const registry = migrateAndInitProjects();
+    const p = registry.projects.find((x) => x.id === id);
+    if (!p) {
+      return res.status(404).json({ success: false, error: '企划不存在' });
+    }
+    if (name && name.trim()) p.name = name.trim();
+    if (description !== undefined) p.description = description.trim();
+    p.updatedAt = new Date().toISOString();
+
+    saveProjectsRegistry(registry);
+
+    const metaFile = path.join(getProjectDir(id), 'project.json');
+    if (fs.existsSync(metaFile)) {
+      fs.writeFileSync(metaFile, JSON.stringify(p, null, 2), 'utf-8');
+    }
+
+    res.json({ success: true, project: getProjectSummary(p) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. Duplicate project
+app.post('/api/projects/:id/duplicate', (req, res) => {
+  try {
+    const { id } = req.params;
+    const registry = migrateAndInitProjects();
+    const sourceMeta = registry.projects.find((p) => p.id === id);
+    if (!sourceMeta) {
+      return res.status(404).json({ success: false, error: '源企划不存在' });
+    }
+
+    const srcDir = getProjectDir(id);
+    const newId = `proj-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+    const newDir = path.join(PROJECTS_DIR, newId);
+    fs.mkdirSync(newDir, { recursive: true });
+
+    // Copy all project files
+    const files = fs.readdirSync(srcDir);
+    files.forEach((f) => {
+      const srcPath = path.join(srcDir, f);
+      const destPath = path.join(newDir, f);
+      if (fs.statSync(srcPath).isFile()) {
+        fs.copyFileSync(srcPath, destPath);
+      }
+    });
+
+    const now = new Date().toISOString();
+    const newMeta = {
+      id: newId,
+      name: `${sourceMeta.name} (副本)`,
+      description: sourceMeta.description || '',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    fs.writeFileSync(path.join(newDir, 'project.json'), JSON.stringify(newMeta, null, 2), 'utf-8');
+
+    registry.projects.push(newMeta);
+    saveProjectsRegistry(registry);
+
+    res.json({
+      success: true,
+      project: getProjectSummary(newMeta),
+      message: `已成功复制企划「${newMeta.name}」`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Delete project
+app.delete('/api/projects/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const registry = migrateAndInitProjects();
+
+    if (registry.projects.length <= 1) {
+      return res.status(400).json({ success: false, error: '不能删除最后一个企划' });
+    }
+
+    const idx = registry.projects.findIndex((p) => p.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ success: false, error: '企划不存在' });
+    }
+
+    registry.projects.splice(idx, 1);
+
+    let switched = false;
+    if (registry.activeProjectId === id) {
+      registry.activeProjectId = registry.projects[0].id;
+      switched = true;
+    }
+    saveProjectsRegistry(registry);
+
+    const dir = path.join(PROJECTS_DIR, id);
+    if (fs.existsSync(dir)) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch (err) {
+        console.warn('Failed to delete project directory:', dir, err);
+      }
+    }
+
+    res.json({
+      success: true,
+      activeProjectId: registry.activeProjectId,
+      switched,
+      message: '企划已成功删除'
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// API Routes: Project Data Read & Write
+// ---------------------------------------------------------------------------
+
+// Get full project data
+app.get('/api/project', (req, res) => {
+  try {
+    const registry = migrateAndInitProjects();
+    const reqPid = req.query.projectId;
+    const activePid = reqPid && registry.projects.some((p) => p.id === reqPid)
+      ? reqPid
+      : registry.activeProjectId;
+
+    if (reqPid && reqPid !== registry.activeProjectId && registry.projects.some((p) => p.id === reqPid)) {
+      registry.activeProjectId = reqPid;
+      saveProjectsRegistry(registry);
+    }
+
+    const pMeta = registry.projects.find((p) => p.id === activePid) || registry.projects[0];
+    const storyFile = getProjectFilePath('story_graph.json', activePid);
+    const charsFile = getProjectFilePath('characters.json', activePid);
+    const worldFile = getProjectFilePath('world_lore.md', activePid);
+    const dbFile = getProjectFilePath('database.json', activePid);
+    const mapFile = getProjectFilePath('map_data.json', activePid);
+
+    const story = fs.existsSync(storyFile) ? JSON.parse(fs.readFileSync(storyFile, 'utf-8')) : defaultStory;
+    const characters = fs.existsSync(charsFile) ? JSON.parse(fs.readFileSync(charsFile, 'utf-8')) : defaultCharacters;
+    const worldLore = fs.existsSync(worldFile) ? fs.readFileSync(worldFile, 'utf-8') : defaultWorldLore;
+    const database = fs.existsSync(dbFile) ? JSON.parse(fs.readFileSync(dbFile, 'utf-8')) : { categories: [], entries: [] };
+    const mapData = fs.existsSync(mapFile) ? JSON.parse(fs.readFileSync(mapFile, 'utf-8')) : defaultMapData;
+
+    const settings = fs.existsSync(SETTINGS_FILE)
+      ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'))
+      : defaultSettings;
+
+    res.json({
+      success: true,
+      project: getProjectSummary(pMeta),
+      activeProjectId: activePid,
       story,
       characters,
       worldLore,
@@ -360,24 +799,62 @@ app.get('/api/project', (req, res) => {
   }
 });
 
-// 1.1 Database routes
+// Database routes
 app.get('/api/database', (req, res) => {
   try {
-    if (!fs.existsSync(DATABASE_FILE)) {
+    const pid = req.query.projectId || getActiveProjectId();
+    const dbFile = getProjectFilePath('database.json', pid);
+    if (!fs.existsSync(dbFile)) {
       return res.json({ success: true, database: { categories: [], entries: [] } });
     }
-    const database = JSON.parse(fs.readFileSync(DATABASE_FILE, 'utf-8'));
+    const database = JSON.parse(fs.readFileSync(dbFile, 'utf-8'));
     res.json({ success: true, database });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 1.2 Map and Timeline routes
+app.post('/api/database', (req, res) => {
+  try {
+    const pid = req.query.projectId || req.body.projectId || getActiveProjectId();
+    const database = req.body.database || req.body;
+    backupDatabase(pid);
+
+    const dbFile = getProjectFilePath('database.json', pid);
+    fs.writeFileSync(dbFile, JSON.stringify(database, null, 2), 'utf-8');
+
+    // Synchronize characters for backward compatibility
+    const charCategory = (database.categories || []).find((c) => c.isCharacterType || c.id === 'characters');
+    if (charCategory) {
+      const charEntries = (database.entries || [])
+        .filter((e) => e.categoryId === charCategory.id)
+        .map((e) => ({
+          id: e.id,
+          name: e.name || e.title,
+          role: e.role || '',
+          bio: e.bio || e.content || e.summary || '',
+          avatar: e.avatar || e.image || '',
+          color: e.color || '#38bdf8',
+          initialAffection: e.initialAffection ?? 50
+        }));
+      fs.writeFileSync(getProjectFilePath('characters.json', pid), JSON.stringify(charEntries, null, 2), 'utf-8');
+    }
+
+    touchProjectUpdated(pid);
+    res.json({ success: true, message: '资料库保存成功', timestamp: new Date() });
+  } catch (err) {
+    console.error('Error saving database:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Map and Timeline routes
 app.get('/api/map', (req, res) => {
   try {
-    const mapData = fs.existsSync(MAP_FILE)
-      ? JSON.parse(fs.readFileSync(MAP_FILE, 'utf-8'))
+    const pid = req.query.projectId || getActiveProjectId();
+    const mapFile = getProjectFilePath('map_data.json', pid);
+    const mapData = fs.existsSync(mapFile)
+      ? JSON.parse(fs.readFileSync(mapFile, 'utf-8'))
       : defaultMapData;
     res.json({ success: true, mapData });
   } catch (err) {
@@ -387,8 +864,12 @@ app.get('/api/map', (req, res) => {
 
 app.post('/api/map', (req, res) => {
   try {
-    const mapData = req.body;
-    fs.writeFileSync(MAP_FILE, JSON.stringify(mapData, null, 2), 'utf-8');
+    const pid = req.query.projectId || req.body.projectId || getActiveProjectId();
+    const mapData = req.body.mapData || req.body;
+    const mapFile = getProjectFilePath('map_data.json', pid);
+    fs.writeFileSync(mapFile, JSON.stringify(mapData, null, 2), 'utf-8');
+
+    touchProjectUpdated(pid);
     res.json({ success: true, message: '地图与时间轴数据保存成功' });
   } catch (err) {
     console.error('Error saving map data:', err);
@@ -396,46 +877,20 @@ app.post('/api/map', (req, res) => {
   }
 });
 
-app.post('/api/database', (req, res) => {
-  try {
-    const database = req.body;
-    backupDatabase();
-    fs.writeFileSync(DATABASE_FILE, JSON.stringify(database, null, 2), 'utf-8');
-
-    // Synchronize characters for backward compatibility
-    const charCategory = (database.categories || []).find(c => c.isCharacterType || c.id === 'characters');
-    if (charCategory) {
-      const charEntries = (database.entries || [])
-        .filter(e => e.categoryId === charCategory.id)
-        .map(e => ({
-          id: e.id,
-          name: e.name || e.title,
-          role: e.role || '',
-          bio: e.bio || e.content || e.summary || '',
-          avatar: e.avatar || e.image || '',
-          color: e.color || '#38bdf8',
-          initialAffection: e.initialAffection ?? 50
-        }));
-      fs.writeFileSync(CHARACTERS_FILE, JSON.stringify(charEntries, null, 2), 'utf-8');
-    }
-
-    res.json({ success: true, message: '资料库保存成功', timestamp: new Date() });
-  } catch (err) {
-    console.error('Error saving database:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 2. Save story graph with backup
+// Save story graph with backup
 app.post('/api/story', (req, res) => {
   try {
+    const pid = req.query.projectId || req.body.projectId || getActiveProjectId();
     const { nodes, edges } = req.body;
     if (!nodes || !edges) {
       return res.status(400).json({ success: false, error: '缺少 nodes 或 edges' });
     }
 
-    backupStory();
-    fs.writeFileSync(STORY_FILE, JSON.stringify({ nodes, edges }, null, 2), 'utf-8');
+    backupStory(pid);
+    const storyFile = getProjectFilePath('story_graph.json', pid);
+    fs.writeFileSync(storyFile, JSON.stringify({ nodes, edges }, null, 2), 'utf-8');
+
+    touchProjectUpdated(pid);
     res.json({ success: true, message: '故事图谱保存成功', timestamp: new Date() });
   } catch (err) {
     console.error('Error saving story:', err);
@@ -443,11 +898,14 @@ app.post('/api/story', (req, res) => {
   }
 });
 
-// 3. Save characters
+// Save characters
 app.post('/api/characters', (req, res) => {
   try {
+    const pid = req.query.projectId || req.body.projectId || getActiveProjectId();
     const characters = req.body;
-    fs.writeFileSync(CHARACTERS_FILE, JSON.stringify(characters, null, 2), 'utf-8');
+    fs.writeFileSync(getProjectFilePath('characters.json', pid), JSON.stringify(characters, null, 2), 'utf-8');
+
+    touchProjectUpdated(pid);
     res.json({ success: true, message: '角色设定保存成功' });
   } catch (err) {
     console.error('Error saving characters:', err);
@@ -455,11 +913,14 @@ app.post('/api/characters', (req, res) => {
   }
 });
 
-// 4. Save world lore
+// Save world lore
 app.post('/api/world', (req, res) => {
   try {
+    const pid = req.query.projectId || req.body.projectId || getActiveProjectId();
     const { content } = req.body;
-    fs.writeFileSync(WORLD_FILE, content, 'utf-8');
+    fs.writeFileSync(getProjectFilePath('world_lore.md', pid), content, 'utf-8');
+
+    touchProjectUpdated(pid);
     res.json({ success: true, message: '世界观设定保存成功' });
   } catch (err) {
     console.error('Error saving world lore:', err);
@@ -467,7 +928,7 @@ app.post('/api/world', (req, res) => {
   }
 });
 
-// 5. Save settings
+// Global settings
 app.post('/api/settings', (req, res) => {
   try {
     const settings = req.body;

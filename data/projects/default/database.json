@@ -1,0 +1,164 @@
+{
+  "categories": [
+    {
+      "id": "characters",
+      "name": "人物档案",
+      "icon": "Users",
+      "isCharacterType": true,
+      "description": "主要角色、盟友、敌手与NPC档案"
+    },
+    {
+      "id": "world",
+      "name": "核心世界观",
+      "icon": "Globe",
+      "isCharacterType": false,
+      "description": "大陆地理、势力格局与社会运行法则"
+    },
+    {
+      "id": "tech",
+      "name": "科技与魔法",
+      "icon": "Zap",
+      "isCharacterType": false,
+      "description": "古代以太科技、超自然法术体系与关键道具"
+    },
+    {
+      "id": "events",
+      "name": "事件资料库",
+      "icon": "History",
+      "isCharacterType": false,
+      "description": "重大历史事件、战役政变与剧情纪事（关联时间、地点与参涉人物）",
+      "isEventType": true
+    },
+    {
+      "id": "locations",
+      "name": "地理与据点",
+      "icon": "MapPin",
+      "isLocationType": true,
+      "description": "各历史时期的名城要塞、遗迹港口与地理地标"
+    }
+  ],
+  "entries": [
+    {
+      "id": "char-alice",
+      "categoryId": "characters",
+      "title": "艾莉丝 (Alice)",
+      "name": "艾莉丝 (Alice)",
+      "tags": [
+        "主要角色",
+        "圣辉王储",
+        "圣术使",
+        "主角羁绊"
+      ],
+      "role": "落难王储 / 圣术使",
+      "bio": "身负圣辉血脉的银发少女，在王都政变中逃脱。性格外柔内刚，善良但对陌生人带有防备心。好感度高时会展现极大的依赖与信任。",
+      "summary": "身负圣辉血脉的银发少女，在王都政变中逃脱。外柔内刚，擅长古代光之以太圣术。",
+      "cardStyle": "standard",
+      "images": [
+        "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80"
+      ],
+      "previewImage": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80",
+      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80",
+      "color": "#10b981",
+      "initialAffection": 50,
+      "image": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80"
+    },
+    {
+      "id": "char-reyn",
+      "categoryId": "characters",
+      "title": "雷恩 (Reyn)",
+      "name": "雷恩 (Reyn)",
+      "tags": [
+        "主角伙伴",
+        "黑鸦猎兵",
+        "近战战术",
+        "退伍军人"
+      ],
+      "role": "佣兵副官",
+      "bio": "经验丰富的退伍军官，主角信赖的左右手。性格沉稳、务实，擅长战术分析，对主角绝对忠诚。",
+      "summary": "经验丰富的老兵，主角信赖的副官，战术分析与断后大师。",
+      "content": "### 角色生平与设定\n\n- **阵营**：黑鸦猎兵团副官。\n- **性格**：寡言沉稳，极具威望，擅长战术调度与险境断后。\n- **人际关系**：与主角生死相托，视主角为真正的领袖。",
+      "avatar": "",
+      "color": "#3b82f6",
+      "initialAffection": 80,
+      "images": [],
+      "previewImage": "",
+      "cardStyle": "standard",
+      "image": ""
+    },
+    {
+      "id": "lore-world-core",
+      "categoryId": "world",
+      "title": "以太纪元背景与大陆格局",
+      "tags": [
+        "核心背景",
+        "世界格局",
+        "纪元史"
+      ],
+      "summary": "千年前大崩解后的分裂大陆，神圣罗恩帝国与商盟联邦分立对峙。",
+      "content": "### 1. 核心背景\n千年前的“天裂灾变”导致古代超以太文明崩解，地表遗留大量蕴藏未知能量的古代遗迹与失控魔物。\n\n### 2. 两大阵营\n- **神圣罗恩帝国**：中央集权君主制，追求以太军备化与古代兵器复原。\n- **商盟联邦**：自由贸易商业同盟，垄断以太原石航运与开采技术。",
+      "cardStyle": "standard",
+      "images": [
+        "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80"
+      ],
+      "previewImage": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80",
+      "image": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600&auto=format&fit=crop&q=80",
+      "name": "以太纪元背景与大陆格局",
+      "color": "#10b981",
+      "initialAffection": 50,
+      "bio": "千年前大崩解后的分裂大陆，神圣罗恩帝国与商盟联邦分立对峙。",
+      "avatar": ""
+    },
+    {
+      "id": "lore-world-powers",
+      "categoryId": "world",
+      "title": "三大隐秘组织与势力",
+      "tags": [
+        "核心势力",
+        "政局",
+        "反派组织"
+      ],
+      "summary": "圣辉王族残党、黑鸦猎兵团、企图唤醒古神的深渊秘教。",
+      "content": "### 势力一览\n- **圣辉王族**：传承古代光之以太正统血脉，因王都被军事政变而四散逃难。\n- **黑鸦猎兵团**：独立精锐雇佣兵，主角所属阵营。\n- **深渊秘教**：暗中收集以太晶核唤醒古神意志的狂热异端信徒。",
+      "image": "",
+      "name": "三大隐秘组织与势力",
+      "images": [],
+      "previewImage": "",
+      "cardStyle": "standard",
+      "color": "#64748b",
+      "initialAffection": 50,
+      "bio": "圣辉王族残党、黑鸦猎兵团、企图唤醒古神的深渊秘教。",
+      "avatar": ""
+    },
+    {
+      "id": "tech-ether-law",
+      "categoryId": "tech",
+      "title": "古代以太动力学三法则",
+      "tags": [
+        "古代科技",
+        "动力能源",
+        "设定法则"
+      ],
+      "summary": "以太共鸣、高频衰变、结晶化固态能量规则。",
+      "content": "### 以太三大核心原理\n1. **血脉共鸣**：只有古代特定遗传因子可无视排异直接驱使以太原力。\n2. **原石衰变**：粗以太长时间暴露会诱发周围有机生物发生甲壳异化。\n3. **固态结晶**：高纯度冷凝以太石为大陆公认的硬通通货与战略物资。",
+      "image": ""
+    },
+    {
+      "id": "tech-holy-pendant",
+      "categoryId": "tech",
+      "title": "圣辉王印吊坠",
+      "tags": [
+        "核心道具",
+        "王室信物",
+        "防御结界"
+      ],
+      "summary": "艾莉丝佩戴的水滴形王储信物，铭刻古代光之神圣符文。",
+      "content": "王室秘传重宝。在佩戴者遭遇致死性攻击时会自动引发强光结界弹开周围威胁，但每次激发后需要消耗佩戴者的生命潜能。",
+      "cardStyle": "square",
+      "images": [
+        "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=600&auto=format&fit=crop&q=80"
+      ],
+      "previewImage": "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=600&auto=format&fit=crop&q=80",
+      "image": "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=600&auto=format&fit=crop&q=80"
+    }
+  ]
+}

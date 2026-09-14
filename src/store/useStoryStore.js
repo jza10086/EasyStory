@@ -38,6 +38,12 @@ export const useStoryStore = create((set, get) => ({
     model: 'deepseek-chat',
     temperature: 0.7
   },
+
+  // Multi-project states
+  currentProject: null,
+  projectsList: [],
+  isProjectsModalOpen: false,
+  setIsProjectsModalOpen: (open) => set({ isProjectsModalOpen: open }),
   
   // Main Workspace: 'nodes' | 'database' | 'map'
   activeWorkspace: 'nodes',
@@ -84,17 +90,30 @@ export const useStoryStore = create((set, get) => ({
   isLoading: true,
 
   // Load complete project from local server
-  loadProject: async () => {
+  loadProject: async (projectId = null) => {
     try {
-      set({ isLoading: true });
-      const res = await fetch('/api/project');
+      set({
+        isLoading: true,
+        selectedNodeId: null,
+        selectedMapLocationId: null,
+        selectedTimelineEventId: null,
+        selectedDatabaseTag: null
+      });
+
+      const targetPid = projectId || localStorage.getItem('lastOpenedProjectId') || '';
+      const url = targetPid ? `/api/project?projectId=${encodeURIComponent(targetPid)}` : '/api/project';
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
+        if (data.activeProjectId || data.project?.id) {
+          localStorage.setItem('lastOpenedProjectId', data.activeProjectId || data.project.id);
+        }
         const loadedDb = data.database || { categories: [], entries: [] };
         const extractedChars = extractCharactersFromDatabase(loadedDb);
         const finalChars = extractedChars.length > 0 ? extractedChars : (data.characters || []);
 
         set({
+          currentProject: data.project || null,
           nodes: data.story.nodes || [],
           edges: data.story.edges || [],
           database: loadedDb,
@@ -930,5 +949,131 @@ export const useStoryStore = create((set, get) => ({
       currentEpochId: targetEpochId,
       timelineSettings
     });
+  },
+
+  // Projects Management Actions
+  fetchProjectsList: async () => {
+    try {
+      const res = await fetch('/api/projects');
+      const data = await res.json();
+      if (data.success) {
+        const active = data.projects.find((p) => p.id === data.activeProjectId) || data.projects[0];
+        set({
+          projectsList: data.projects || [],
+          currentProject: active || get().currentProject
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch projects list:', err);
+    }
+  },
+
+  switchProject: async (projectId) => {
+    try {
+      if (get().currentProject?.id === projectId) return;
+      // Flush unsaved story changes if any
+      await get().saveStoryImmediate();
+
+      set({ isLoading: true });
+      const res = await fetch('/api/projects/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await get().loadProject(projectId);
+        await get().fetchProjectsList();
+      } else {
+        alert(`切换企划失败: ${data.error || '未知错误'}`);
+        set({ isLoading: false });
+      }
+    } catch (err) {
+      console.error('Failed to switch project:', err);
+      set({ isLoading: false });
+    }
+  },
+
+  createProject: async ({ name, description, template }) => {
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, template })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await get().loadProject(data.activeProjectId || data.project.id);
+        await get().fetchProjectsList();
+        return { success: true, project: data.project };
+      } else {
+        return { success: false, error: data.error };
+      }
+    } catch (err) {
+      console.error('Failed to create project:', err);
+      return { success: false, error: err.message };
+    }
+  },
+
+  updateProjectMeta: async (id, { name, description }) => {
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (get().currentProject?.id === id) {
+          set({ currentProject: data.project });
+        }
+        await get().fetchProjectsList();
+        return { success: true, project: data.project };
+      } else {
+        return { success: false, error: data.error };
+      }
+    } catch (err) {
+      console.error('Failed to update project:', err);
+      return { success: false, error: err.message };
+    }
+  },
+
+  duplicateProject: async (id) => {
+    try {
+      const res = await fetch(`/api/projects/${id}/duplicate`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (data.success) {
+        await get().fetchProjectsList();
+        return { success: true, project: data.project };
+      } else {
+        return { success: false, error: data.error };
+      }
+    } catch (err) {
+      console.error('Failed to duplicate project:', err);
+      return { success: false, error: err.message };
+    }
+  },
+
+  deleteProject: async (id) => {
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.switched) {
+          await get().loadProject(data.activeProjectId);
+        }
+        await get().fetchProjectsList();
+        return { success: true };
+      } else {
+        return { success: false, error: data.error };
+      }
+    } catch (err) {
+      console.error('Failed to delete project:', err);
+      return { success: false, error: err.message };
+    }
   }
 }));

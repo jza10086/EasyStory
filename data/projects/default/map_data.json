@@ -1,0 +1,40 @@
+{
+  "timelineSettings": {
+    "minYear": 2000,
+    "maxYear": 2100,
+    "leftBound": 2015,
+    "rightBound": 2036,
+    "currentTime": 2000
+  },
+  "currentEpochId": "epoch-pre-ww3",
+  "epochs": [
+    {
+      "id": "epoch-pre-ww3",
+      "name": "三战前",
+      "timeRange": [
+        2000,
+        2042
+      ],
+      "mapVariant": "pre-ww3",
+      "description": "第三次世界大战爆发前的全球地缘格局与国际秩序（2000 ~ 2042年）。",
+      "regionColors": {},
+      "locations": [],
+      "platesData": {}
+    },
+    {
+      "id": "epoch-post-ww3",
+      "name": "三战后",
+      "timeRange": [
+        2042,
+        2100
+      ],
+      "mapVariant": "post-ww3",
+      "description": "第三次世界大战后的世界新秩序、地缘版图重组与战后重建（2042 ~ 2100年）。",
+      "regionColors": {},
+      "locations": [],
+      "platesData": {}
+    }
+  ],
+  "locations": [],
+  "timeline": []
+}

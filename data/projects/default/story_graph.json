@@ -1,0 +1,208 @@
+{
+  "nodes": [
+    {
+      "id": "node-1",
+      "type": "storyNode",
+      "position": {
+        "x": 100,
+        "y": 220
+      },
+      "data": {
+        "code": "1",
+        "title": "遗迹初遇",
+        "summary": "### 场景：古代以太回廊\n主角在深处偶遇了受伤昏迷的银发少女**艾莉丝**，周边三头异化魔物正在逼近，面临关键抉择。",
+        "characters": [
+          "char-alice"
+        ],
+        "characterStatuses": {
+          "char-alice": "倒在祭坛边缘，重伤昏迷，好感度+15"
+        },
+        "dialogueList": [
+          {
+            "id": "beat-1-1",
+            "speakerId": "narrator",
+            "speakerState": "环境氛围 / 焦硫味弥漫",
+            "text": "空气中弥漫着刺鼻的焦硫味。蓝色的以太微光在破损的石柱间明灭不定。主角握紧短剑，穿过碎石来到古老祭坛前。"
+          },
+          {
+            "id": "beat-1-2",
+            "speakerId": "narrator",
+            "speakerState": "危机突降 / 低吼逼近",
+            "text": "在祭坛边缘，一位银发少女倒在血泊中。突然，地底深处传来沉闷的低吼，三头【岩甲噬魂兽】从阴影中爬出，猩红的复眼死死盯住了少女！"
+          },
+          {
+            "id": "beat-1-3",
+            "speakerId": "char-alice",
+            "speakerState": "微弱呢喃，手指无力地抓着石板",
+            "text": "唔……快走……别管我……"
+          },
+          {
+            "id": "beat-1-4",
+            "speakerId": "narrator",
+            "speakerState": "全知视角 / 决断时刻",
+            "text": "魔物咆哮着跃起，危机迫在眉睫，主角必须立即做出决断！"
+          }
+        ],
+        "endingType": "none",
+        "image": "",
+        "choices": [
+          {
+            "id": "choice-1-1",
+            "label": "救助少女并迅速撤退",
+            "targetId": "node-1-1",
+            "condition": "好感度 +15 / 需消耗体力"
+          },
+          {
+            "id": "choice-1-2",
+            "label": "先拔刀消灭逼近的魔物",
+            "targetId": "node-1-2",
+            "condition": "武力值 >= 12"
+          },
+          {
+            "id": "choice-1-3",
+            "label": "静观其变，暗中调查身份",
+            "targetId": "node-1-3",
+            "condition": "洞察 >= 14 / 潜行模式"
+          }
+        ]
+      }
+    },
+    {
+      "id": "node-1-1",
+      "type": "storyNode",
+      "position": {
+        "x": 620,
+        "y": 60
+      },
+      "data": {
+        "code": "1.1",
+        "title": "并肩脱险",
+        "summary": "主角抱起少女冲出崩塌通道。少女苏醒，得知主角身份后放下防备，赠予护身符。",
+        "characters": [
+          "char-alice"
+        ],
+        "characterStatuses": {
+          "char-alice": "脱险苏醒，脸颊微红，对主角产生信任"
+        },
+        "dialogueList": [
+          {
+            "id": "beat-11-1",
+            "speakerId": "narrator",
+            "speakerState": "狂奔冲刺 / 巨石塌陷",
+            "text": "主角抱起冰冷的少女，甩出烟雾弹狂奔冲向侧翼通道。巨石在身后轰鸣塌陷，彻底阻断了怪物的追击。"
+          },
+          {
+            "id": "beat-11-2",
+            "speakerId": "char-alice",
+            "speakerState": "缓缓睁开淡紫眼眸，脸颊微红",
+            "text": "谢谢你……我还以为自己再也见不到阳光了。"
+          }
+        ],
+        "endingType": "none",
+        "image": "",
+        "choices": []
+      }
+    },
+    {
+      "id": "node-1-2",
+      "type": "storyNode",
+      "position": {
+        "x": 620,
+        "y": 220
+      },
+      "data": {
+        "code": "1.2",
+        "title": "险胜魔物",
+        "summary": "主角拔刀斩杀魔物，展现惊人战力。少女惊醒，对主角力量感到震撼并略带戒备。",
+        "characters": [
+          "char-alice"
+        ],
+        "characterStatuses": {
+          "char-alice": "惊醒后退，对主角实力感到震撼且略有戒备"
+        },
+        "dialogueList": [
+          {
+            "id": "beat-12-1",
+            "speakerId": "narrator",
+            "speakerState": "剑气纵横 / 苦战击杀",
+            "text": "主角眼神一凛，拔刀横斩！凌厉的剑气劈碎噬魂兽硬甲，三头怪物尽数毙命。"
+          },
+          {
+            "id": "beat-12-2",
+            "speakerId": "char-alice",
+            "speakerState": "捂住伤口后退半步，警惕打量",
+            "text": "好强的剑术……你到底是什么人？也是为了王室秘宝而来的吗？"
+          }
+        ],
+        "endingType": "none",
+        "image": "",
+        "choices": []
+      }
+    },
+    {
+      "id": "node-1-3",
+      "type": "storyNode",
+      "position": {
+        "x": 620,
+        "y": 380
+      },
+      "data": {
+        "code": "1.3",
+        "title": "探问虚实",
+        "summary": "主角隐于阴影观察，发现了遗落的信物与符文，洞悉了王国叛乱的惊人线索。",
+        "characters": [
+          "char-alice"
+        ],
+        "characterStatuses": {
+          "char-alice": "陷入深度昏迷，护身符泛着金色结界"
+        },
+        "dialogueList": [
+          {
+            "id": "beat-13-1",
+            "speakerId": "narrator",
+            "speakerState": "暗处潜行观察",
+            "text": "魔物扑向少女的一瞬间，少女脖颈间的吊坠突然爆发出剧烈的金色结界，将魔物震退！"
+          },
+          {
+            "id": "beat-13-2",
+            "speakerId": "narrator",
+            "speakerState": "主角内心暗忖",
+            "text": "从那枚坠子的纹样来看，那是失落百年的【圣辉王印】……王都政变中逃脱的真正王储，果然就是她。"
+          }
+        ],
+        "endingType": "none",
+        "image": "",
+        "choices": []
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-1-1.1",
+      "source": "node-1",
+      "target": "node-1-1",
+      "type": "conditionEdge",
+      "data": {
+        "condition": "好感度 +15 / 需消耗体力"
+      }
+    },
+    {
+      "id": "e-1-1.2",
+      "source": "node-1",
+      "target": "node-1-2",
+      "type": "conditionEdge",
+      "data": {
+        "condition": "武力值 >= 12"
+      }
+    },
+    {
+      "id": "e-1-1.3",
+      "source": "node-1",
+      "target": "node-1-3",
+      "type": "conditionEdge",
+      "data": {
+        "condition": "洞察 >= 14 / 潜行模式"
+      }
+    }
+  ]
+}

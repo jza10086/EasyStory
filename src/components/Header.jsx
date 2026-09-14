@@ -12,7 +12,9 @@ import {
   Loader2,
   PanelLeft,
   LayoutGrid,
-  Maximize2
+  Maximize2,
+  FolderGit2,
+  ChevronDown
 } from 'lucide-react';
 
 export default function Header() {
@@ -23,11 +25,19 @@ export default function Header() {
   const setActiveModal = useStoryStore((s) => s.setActiveModal);
   const nodes = useStoryStore((s) => s.nodes);
 
+  const currentProject = useStoryStore((s) => s.currentProject);
+  const setIsProjectsModalOpen = useStoryStore((s) => s.setIsProjectsModalOpen);
+  const fetchProjectsList = useStoryStore((s) => s.fetchProjectsList);
+
   const isLeftSidebarOpen = useStoryStore((s) => s.isLeftSidebarOpen);
   const toggleLeftSidebar = useStoryStore((s) => s.toggleLeftSidebar);
   const activeWorkspace = useStoryStore((s) => s.activeWorkspace);
   const setActiveWorkspace = useStoryStore((s) => s.setActiveWorkspace);
   const canvasActions = useStoryStore((s) => s.canvasActions);
+
+  useEffect(() => {
+    fetchProjectsList();
+  }, [fetchProjectsList]);
 
   // Keyboard shortcut: Ctrl+S to save
   useEffect(() => {
@@ -63,11 +73,25 @@ export default function Header() {
           <BookOpen className="w-4 h-4" />
         </div>
 
-        {/* Brand Title */}
+        {/* Brand Title & Project Switcher */}
         <div className="flex items-center gap-2.5">
           <h1 className="text-sm font-bold text-slate-100 tracking-wide">
             StoryFlow <span className="text-xs font-normal text-sky-400">剧流 · 分支剧情工坊</span>
           </h1>
+
+          {/* Project Switcher Pill Button */}
+          <button
+            onClick={() => setIsProjectsModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-750 border border-slate-700/80 hover:border-sky-500/50 text-slate-200 hover:text-white transition-all text-xs group cursor-pointer"
+            title="点击管理与切换企划"
+          >
+            <FolderGit2 className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform" />
+            <span className="font-medium max-w-[130px] truncate">
+              {currentProject?.name || '以太纪元'}
+            </span>
+            <ChevronDown className="w-3 h-3 text-slate-400 group-hover:text-sky-400 transition-colors" />
+          </button>
+
           <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
             共 {nodes.length} 个节点
           </span>

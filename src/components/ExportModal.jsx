@@ -5,6 +5,7 @@ import { X, Download, Copy, Check, FileText, Code2 } from 'lucide-react';
 export default function ExportModal() {
   const activeModal = useStoryStore((s) => s.activeModal);
   const setActiveModal = useStoryStore((s) => s.setActiveModal);
+  const currentProject = useStoryStore((s) => s.currentProject);
   const nodes = useStoryStore((s) => s.nodes);
   const edges = useStoryStore((s) => s.edges);
   const characters = useStoryStore((s) => s.characters);
@@ -17,8 +18,9 @@ export default function ExportModal() {
 
   // Generate Markdown export
   const generateMarkdown = () => {
-    let md = `# 游戏多分支剧本大纲总览\n\n`;
-    md += `> 导出时间：${new Date().toLocaleString()} | 节点总数：${nodes.length}\n\n`;
+    const projName = currentProject?.name || '游戏剧作企划';
+    let md = `# 《${projName}》多分支剧本大纲总览\n\n`;
+    md += `> 企划：${projName} | 导出时间：${new Date().toLocaleString()} | 节点总数：${nodes.length}\n\n`;
 
     md += `## 一、核心世界观设定\n\n${worldLore || '*暂无*'}\n\n---\n\n`;
 
@@ -100,7 +102,8 @@ export default function ExportModal() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = format === 'markdown' ? `StoryFlow_Script_${Date.now()}.md` : `StoryFlow_Data_${Date.now()}.json`;
+    const safeProjName = (currentProject?.name || 'StoryFlow').replace(/[\\/:*?"<>|]/g, '_');
+    a.download = format === 'markdown' ? `${safeProjName}_Script_${Date.now()}.md` : `${safeProjName}_Data_${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
