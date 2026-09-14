@@ -102,13 +102,13 @@ export const useStoryStore = create((set, get) => ({
           worldLore: data.worldLore || '',
           mapData: {
             timelineSettings: data.mapData?.timelineSettings || {
-              minYear: -1000,
+              minYear: 2000,
               maxYear: 2100,
-              leftBound: -500,
-              rightBound: 2080,
+              leftBound: 2000,
+              rightBound: 2042,
               currentTime: 2024
             },
-            currentEpochId: data.mapData?.currentEpochId || 'epoch-modern',
+            currentEpochId: data.mapData?.currentEpochId || 'epoch-pre-ww3',
             epochs: (data.mapData?.epochs || []).map((ep) => {
               if (Array.isArray(ep.locations)) return ep;
               const rootLocs = data.mapData?.locations || [];
@@ -120,7 +120,17 @@ export const useStoryStore = create((set, get) => ({
             locations: (data.mapData?.epochs || []).flatMap((e) => e.locations || []).length > 0
               ? (data.mapData?.epochs || []).flatMap((e) => e.locations || [])
               : (data.mapData?.locations || []),
-            timeline: data.mapData?.timeline || []
+            timeline: (() => {
+              const loadedTimeline = data.mapData?.timeline || [];
+              const eventEntries = (loadedDb.entries || []).filter((e) => e.categoryId === 'events');
+              const map = new Map();
+              loadedTimeline.forEach((t) => map.set(t.id, t));
+              eventEntries.forEach((e) => {
+                const existing = map.get(e.id) || {};
+                map.set(e.id, { ...existing, ...e });
+              });
+              return Array.from(map.values()).sort((a, b) => (a.year || 0) - (b.year || 0));
+            })()
           },
           settings: data.settings || get().settings,
           isLoading: false,
@@ -460,6 +470,51 @@ export const useStoryStore = create((set, get) => ({
 
     const updatedDb = { ...db, entries };
     await get().saveDatabase(updatedDb);
+
+    // If this is an event, synchronize with mapData.timeline
+    if (normalizedEntry.categoryId === 'events') {
+      const mapData = get().mapData || {};
+      const timeline = [...(mapData.timeline || [])];
+      const eventRecord = {
+        id: normalizedEntry.id,
+        categoryId: 'events',
+        title: normalizedEntry.title || normalizedEntry.name,
+        name: normalizedEntry.name || normalizedEntry.title,
+        epochId: normalizedEntry.epochId || mapData.currentEpochId || 'epoch-pre-ww3',
+        year: typeof normalizedEntry.year === 'number' ? normalizedEntry.year : (mapData.timelineSettings?.currentTime || 2024),
+        timeLabel: normalizedEntry.timeLabel || `${normalizedEntry.year || 2024}年`,
+        locationId: normalizedEntry.locationId || '',
+        locationName: normalizedEntry.locationName || '',
+        hierarchyText: normalizedEntry.hierarchyText || '',
+        continent: normalizedEntry.continent || '',
+        country: normalizedEntry.country || '',
+        province: normalizedEntry.province || '',
+        city: normalizedEntry.city || '',
+        lng: typeof normalizedEntry.lng === 'number' ? normalizedEntry.lng : undefined,
+        lat: typeof normalizedEntry.lat === 'number' ? normalizedEntry.lat : undefined,
+        characterIds: Array.isArray(normalizedEntry.characterIds) ? normalizedEntry.characterIds : [],
+        characters: Array.isArray(normalizedEntry.characters) ? normalizedEntry.characters : [],
+        customCharacters: normalizedEntry.customCharacters || '',
+        description: normalizedEntry.summary || normalizedEntry.bio || normalizedEntry.content || '',
+        summary: normalizedEntry.summary || normalizedEntry.bio || '',
+        content: normalizedEntry.content || '',
+        tag: normalizedEntry.tags?.[0] || '历史事件',
+        tags: normalizedEntry.tags?.length ? normalizedEntry.tags : ['历史事件'],
+        color: normalizedEntry.color || '#f59e0b',
+        images: Array.isArray(normalizedEntry.images) ? normalizedEntry.images : [],
+        previewImage: normalizedEntry.previewImage || ''
+      };
+
+      const tIdx = timeline.findIndex((t) => t.id === entryId);
+      if (tIdx >= 0) {
+        timeline[tIdx] = { ...timeline[tIdx], ...eventRecord };
+      } else {
+        timeline.push(eventRecord);
+      }
+      timeline.sort((a, b) => (a.year || 0) - (b.year || 0));
+      await get().saveMapData({ ...mapData, timeline });
+    }
+
     return normalizedEntry;
   },
 
@@ -469,6 +524,16 @@ export const useStoryStore = create((set, get) => ({
     const entries = (db.entries || []).filter((e) => e.id !== entryId);
     const updatedDb = { ...db, entries };
     await get().saveDatabase(updatedDb);
+
+    // Also remove from mapData.timeline if present
+    const mapData = get().mapData || {};
+    const timeline = (mapData.timeline || []).filter((t) => t.id !== entryId);
+    if (timeline.length !== (mapData.timeline || []).length) {
+      if (get().selectedTimelineEventId === entryId) {
+        set({ selectedTimelineEventId: null });
+      }
+      await get().saveMapData({ ...mapData, timeline });
+    }
   },
 
   // Save or update a category in the database
@@ -746,31 +811,74 @@ export const useStoryStore = create((set, get) => ({
   addTimelineEvent: async (event) => {
     const current = get().mapData || {};
     const timeline = [...(current.timeline || [])];
+    const eventId = event.id || `evt-${Date.now().toString(36)}`;
     const newEvt = {
-      id: event.id || `evt-${Date.now().toString(36)}`,
+      id: eventId,
+      categoryId: 'events',
       year: typeof event.year === 'number' ? event.year : current.timelineSettings?.currentTime || 2024,
       timeLabel: event.timeLabel || `${event.year || 2024}年`,
-      title: event.title || '新纪事事件',
-      epochId: event.epochId || current.currentEpochId || 'epoch-modern',
-      description: event.description || '',
+      title: event.title || event.name || '新纪事事件',
+      name: event.title || event.name || '新纪事事件',
+      epochId: event.epochId || current.currentEpochId || 'epoch-pre-ww3',
+      description: event.description || event.summary || '',
+      summary: event.summary || event.description || '',
+      content: event.content || '',
       locationId: event.locationId || '',
-      tag: event.tag || '主线'
+      locationName: event.locationName || '',
+      hierarchyText: event.hierarchyText || '',
+      continent: event.continent || '',
+      country: event.country || '',
+      province: event.province || '',
+      city: event.city || '',
+      lng: typeof event.lng === 'number' ? event.lng : undefined,
+      lat: typeof event.lat === 'number' ? event.lat : undefined,
+      characterIds: Array.isArray(event.characterIds) ? event.characterIds : [],
+      characters: Array.isArray(event.characters) ? event.characters : [],
+      customCharacters: event.customCharacters || '',
+      tag: event.tag || (event.tags?.[0]) || '历史事件',
+      tags: Array.isArray(event.tags) ? event.tags : [event.tag || '历史事件'],
+      color: event.color || '#f59e0b',
+      images: Array.isArray(event.images) ? event.images : [],
+      previewImage: event.previewImage || ''
     };
     timeline.push(newEvt);
-    // Sort chronologically
     timeline.sort((a, b) => (a.year || 0) - (b.year || 0));
     await get().saveMapData({ ...current, timeline });
     set({ selectedTimelineEventId: newEvt.id });
+
+    // Also sync to database.entries
+    const db = get().database || { categories: [], entries: [] };
+    const entries = [...(db.entries || [])];
+    const eIdx = entries.findIndex((e) => e.id === eventId);
+    if (eIdx >= 0) {
+      entries[eIdx] = { ...entries[eIdx], ...newEvt };
+    } else {
+      entries.push(newEvt);
+    }
+    await get().saveDatabase({ ...db, entries });
+
     return newEvt;
   },
 
   updateTimelineEvent: async (id, patch) => {
     const current = get().mapData || {};
-    const timeline = (current.timeline || []).map((evt) =>
-      evt.id === id ? { ...evt, ...patch } : evt
-    );
+    let updatedEvt = null;
+    const timeline = (current.timeline || []).map((evt) => {
+      if (evt.id === id) {
+        updatedEvt = { ...evt, ...patch };
+        return updatedEvt;
+      }
+      return evt;
+    });
     timeline.sort((a, b) => (a.year || 0) - (b.year || 0));
     await get().saveMapData({ ...current, timeline });
+
+    // Also sync to database.entries
+    if (updatedEvt) {
+      const db = get().database || { categories: [], entries: [] };
+      const entries = (db.entries || []).map((e) => e.id === id ? { ...e, ...updatedEvt } : e);
+      await get().saveDatabase({ ...db, entries });
+    }
   },
 
   deleteTimelineEvent: async (id) => {
@@ -780,5 +888,47 @@ export const useStoryStore = create((set, get) => ({
       set({ selectedTimelineEventId: null });
     }
     await get().saveMapData({ ...current, timeline });
+
+    // Also delete from database.entries
+    const db = get().database || { categories: [], entries: [] };
+    const entries = (db.entries || []).filter((e) => e.id !== id);
+    await get().saveDatabase({ ...db, entries });
+  },
+
+  focusTimelineEvent: async (event) => {
+    if (!event) return;
+    const current = get().mapData || {};
+    const epochs = current.epochs || [];
+    const targetEpochId = event.epochId || current.currentEpochId || 'epoch-pre-ww3';
+    const targetEpoch = epochs.find((e) => e.id === targetEpochId) || epochs[0];
+    const epStart = targetEpoch?.timeRange?.[0] ?? 2000;
+    const epEnd = targetEpoch?.timeRange?.[1] ?? 2100;
+    const evtYear = typeof event.year === 'number' ? event.year : epStart;
+
+    let left = current.timelineSettings?.leftBound ?? epStart;
+    let right = current.timelineSettings?.rightBound ?? epEnd;
+
+    // Make sure bounds encompass the event year within the epoch
+    if (evtYear < left) left = Math.max(epStart, evtYear);
+    if (evtYear > right) right = Math.min(epEnd, evtYear);
+
+    const timelineSettings = {
+      ...(current.timelineSettings || {}),
+      leftBound: left,
+      rightBound: right,
+      currentTime: evtYear
+    };
+
+    set({
+      activeWorkspace: 'map',
+      selectedTimelineEventId: event.id,
+      selectedMapLocationId: event.locationId || null
+    });
+
+    await get().saveMapData({
+      ...current,
+      currentEpochId: targetEpochId,
+      timelineSettings
+    });
   }
 }));

@@ -35,7 +35,9 @@ import {
   SlidersHorizontal,
   ChevronRight,
   MapPin,
-  Compass
+  Compass,
+  Clock,
+  Calendar
 } from 'lucide-react';
 
 const ICON_MAP = {
@@ -83,9 +85,14 @@ export default function DatabaseWorkspace() {
   const deleteEpochLocation = useStoryStore((s) => s.deleteEpochLocation);
   const setSelectedMapLocationId = useStoryStore((s) => s.setSelectedMapLocationId);
   const selectEpoch = useStoryStore((s) => s.selectEpoch);
+  const focusTimelineEvent = useStoryStore((s) => s.focusTimelineEvent);
 
   const categories = database.categories || [];
   const entries = database.entries || [];
+
+  const allCharacters = useMemo(() => {
+    return entries.filter((e) => e.categoryId === 'characters' || e.isCharacterType);
+  }, [entries]);
 
   // View layout: 'auto' (respect each card's cardStyle) | 'standard' | 'square'
   const [viewLayout, setViewLayout] = useState('auto');
@@ -98,9 +105,9 @@ export default function DatabaseWorkspace() {
     isCharacterType: false
   };
 
-  // State for Map Epoch Folders (when in 'locations' category)
+  // State for Map Epoch Folders (when in 'locations' or 'events' category)
   const [selectedEpochFolderId, setSelectedEpochFolderId] = useState(() => {
-    return mapData.currentEpochId || mapData.epochs?.[0]?.id || 'epoch-ancient';
+    return mapData.currentEpochId || mapData.epochs?.[0]?.id || 'epoch-pre-ww3';
   });
 
   // State for Administrative division search (for location cards)
@@ -168,6 +175,30 @@ export default function DatabaseWorkspace() {
       });
     }
 
+    if (activeCategory.id === 'events') {
+      return entries.filter((e) => {
+        if (e.categoryId !== 'events') return false;
+        if (selectedEpochFolderId && selectedEpochFolderId !== 'all') {
+          const epId = e.epochId || mapData.epochs?.[0]?.id;
+          if (epId !== selectedEpochFolderId) return false;
+        }
+        if (selectedDatabaseTag && (!Array.isArray(e.tags) || !e.tags.includes(selectedDatabaseTag))) {
+          return false;
+        }
+        if (databaseSearchKeyword.trim()) {
+          const kw = databaseSearchKeyword.toLowerCase();
+          const titleMatch = (e.title || e.name || '').toLowerCase().includes(kw);
+          const bioMatch = (e.summary || e.bio || e.content || '').toLowerCase().includes(kw);
+          const locMatch = (e.locationName || e.hierarchyText || '').toLowerCase().includes(kw);
+          const charMatch = (e.characters || []).some((c) => (c.name || '').toLowerCase().includes(kw)) ||
+            (e.customCharacters || '').toLowerCase().includes(kw);
+          const tagMatch = (e.tags || []).some((t) => t.toLowerCase().includes(kw));
+          return titleMatch || bioMatch || locMatch || charMatch || tagMatch;
+        }
+        return true;
+      });
+    }
+
     return entries.filter((e) => {
       if (e.categoryId !== activeCategory.id) return false;
       if (selectedDatabaseTag && (!Array.isArray(e.tags) || !e.tags.includes(selectedDatabaseTag))) {
@@ -182,7 +213,7 @@ export default function DatabaseWorkspace() {
       }
       return true;
     });
-  }, [entries, activeCategory.id, selectedDatabaseTag, databaseSearchKeyword, currentEpochLocations]);
+  }, [entries, activeCategory.id, selectedDatabaseTag, databaseSearchKeyword, currentEpochLocations, selectedEpochFolderId, mapData.epochs]);
 
   // All tags in active category
   const activeCategoryTags = useMemo(() => {
@@ -255,6 +286,52 @@ export default function DatabaseWorkspace() {
 
       await saveEpochLocation(targetEpochId, normalizedLoc);
       return normalizedLoc;
+    }
+
+    // Handle Event category persistence
+    if (rawEntry.categoryId === 'events' || activeCategory.id === 'events') {
+      const targetEpochId = rawEntry.epochId || (selectedEpochFolderId !== 'all' ? selectedEpochFolderId : null) || mapData.currentEpochId || mapData.epochs?.[0]?.id || 'epoch-pre-ww3';
+      const finalImages = Array.isArray(rawEntry.images) ? rawEntry.images : [];
+      const finalPreview = rawEntry.previewImage || finalImages[0] || '';
+
+      const normalizedEvent = {
+        ...rawEntry,
+        id: rawEntry.id || `evt-${Date.now().toString(36)}`,
+        categoryId: 'events',
+        epochId: targetEpochId,
+        year: typeof rawEntry.year === 'number' ? rawEntry.year : 2024,
+        timeLabel: rawEntry.timeLabel || `${rawEntry.year || 2024}年`,
+        title: finalName,
+        name: finalName,
+        locationId: rawEntry.locationId || '',
+        locationName: rawEntry.locationName || '',
+        hierarchyText: rawEntry.hierarchyText || '',
+        continent: rawEntry.continent || '',
+        country: rawEntry.country || '',
+        province: rawEntry.province || '',
+        city: rawEntry.city || '',
+        lng: typeof rawEntry.lng === 'number' ? rawEntry.lng : undefined,
+        lat: typeof rawEntry.lat === 'number' ? rawEntry.lat : undefined,
+        characterIds: Array.isArray(rawEntry.characterIds) ? rawEntry.characterIds : [],
+        characters: Array.isArray(rawEntry.characters) ? rawEntry.characters : [],
+        customCharacters: rawEntry.customCharacters || '',
+        summary: rawEntry.summary || rawEntry.bio || '',
+        bio: rawEntry.bio || rawEntry.summary || '',
+        description: rawEntry.summary || rawEntry.bio || '',
+        content: rawEntry.content || '',
+        tags: Array.isArray(rawEntry.tags) && rawEntry.tags.length ? rawEntry.tags : ['历史事件'],
+        images: finalImages,
+        previewImage: finalPreview,
+        cardStyle: rawEntry.cardStyle || 'standard',
+        color: rawEntry.color || '#f59e0b'
+      };
+
+      if (!rawEntry.id && normalizedEvent.id) {
+        setEditingEntry((prev) => (prev ? { ...prev, id: normalizedEvent.id } : null));
+      }
+
+      await saveDatabaseEntry(normalizedEvent);
+      return normalizedEvent;
     }
 
     const finalImages = Array.isArray(rawEntry.images) ? rawEntry.images : [];
@@ -348,6 +425,52 @@ export default function DatabaseWorkspace() {
       return;
     }
 
+    if (activeCategory.id === 'events') {
+      const targetEpoch = (selectedEpochFolderId && selectedEpochFolderId !== 'all')
+        ? selectedEpochFolderId
+        : (mapData.currentEpochId || mapData.epochs?.[0]?.id || 'epoch-pre-ww3');
+      const targetEpochObj = mapData.epochs?.find((e) => e.id === targetEpoch) || mapData.epochs?.[0];
+      const defaultYear = targetEpochObj?.timeRange?.[0] || 2024;
+      const newEvent = {
+        id: '',
+        categoryId: 'events',
+        epochId: targetEpoch,
+        year: defaultYear,
+        timeLabel: `${defaultYear}年`,
+        title: '',
+        name: '',
+        locationId: '',
+        locationName: '',
+        hierarchyText: '',
+        continent: '亚洲',
+        country: '',
+        province: '',
+        city: '',
+        lng: 116.4074,
+        lat: 39.9042,
+        characterIds: [],
+        characters: [],
+        customCharacters: '',
+        tags: ['历史事件'],
+        summary: '',
+        bio: '',
+        content: '',
+        images: [],
+        previewImage: '',
+        cardStyle: 'standard',
+        color: '#f59e0b'
+      };
+      setEditingEntry(newEvent);
+      latestEditingEntryRef.current = newEvent;
+      setCardSaveStatus('saved');
+      setTagInput('');
+      setImageUrlInput('');
+      setEditorTab('content');
+      setDivisionQuery('');
+      setDivisionResults([]);
+      return;
+    }
+
     const defaultStyle = activeCategory.id === 'tech' ? 'square' : 'standard';
     const newEntry = {
       id: '',
@@ -384,15 +507,22 @@ export default function DatabaseWorkspace() {
 
     const loadedEntry = {
       ...entry,
-      categoryId: entry.categoryId || (activeCategory.id === 'locations' ? 'locations' : 'general'),
-      epochId: entry.epochId || selectedEpochFolderId || mapData.currentEpochId || mapData.epochs?.[0]?.id,
+      categoryId: entry.categoryId || (activeCategory.id === 'locations' ? 'locations' : activeCategory.id === 'events' ? 'events' : 'general'),
+      epochId: entry.epochId || (selectedEpochFolderId !== 'all' ? selectedEpochFolderId : null) || mapData.currentEpochId || mapData.epochs?.[0]?.id,
+      year: typeof entry.year === 'number' ? entry.year : 2024,
+      timeLabel: entry.timeLabel || `${entry.year || 2024}年`,
+      locationId: entry.locationId || '',
+      locationName: entry.locationName || '',
+      characterIds: Array.isArray(entry.characterIds) ? [...entry.characterIds] : [],
+      characters: Array.isArray(entry.characters) ? [...entry.characters] : [],
+      customCharacters: entry.customCharacters || '',
       title: entry.title || entry.name || '',
       name: entry.name || entry.title || '',
       tags: Array.isArray(entry.tags) ? [...entry.tags] : [],
       images: entryImages,
       previewImage: entryPreview,
       cardStyle: entry.cardStyle || 'standard',
-      color: entry.color || '#38bdf8',
+      color: entry.color || (entry.categoryId === 'events' ? '#f59e0b' : '#38bdf8'),
       initialAffection: entry.initialAffection ?? 50,
       // Geo properties
       continent: entry.continent || '亚洲',
@@ -758,23 +888,64 @@ export default function DatabaseWorkspace() {
               </div>
             </div>
 
-            {/* Epoch Folders Row for Locations */}
-            {activeCategory.id === 'locations' && (
+            {/* Epoch Folders Row for Locations or Events */}
+            {(activeCategory.id === 'locations' || activeCategory.id === 'events') && (
               <div className="pt-2 border-t border-slate-800/80 space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-amber-300 flex items-center gap-1.5">
                     <Folder className="w-3.5 h-3.5 text-amber-400" />
-                    <span>地图时期地点文件夹 (按历史时期归档)</span>
+                    <span>
+                      {activeCategory.id === 'events'
+                        ? '历史时期纪事文件夹 (按纪元归档编年)'
+                        : '地图时期地点文件夹 (按历史时期归档)'}
+                    </span>
                   </span>
                   <span className="text-[11px] text-slate-400">
-                    当前文件夹：<strong className="text-amber-200">{currentEpochFolder?.name || '未知时期'}</strong> · 共 {currentEpochLocations.length} 个据点
+                    当前文件夹：<strong className="text-amber-200">
+                      {selectedEpochFolderId === 'all'
+                        ? '全部历史时期'
+                        : (currentEpochFolder?.name || '未知时期')}
+                    </strong> · 共 {
+                      activeCategory.id === 'events'
+                        ? (selectedEpochFolderId === 'all'
+                            ? entries.filter((e) => e.categoryId === 'events').length
+                            : entries.filter((e) => e.categoryId === 'events' && (e.epochId === selectedEpochFolderId || (!e.epochId && selectedEpochFolderId === mapData.epochs[0]?.id))).length)
+                        : currentEpochLocations.length
+                    } 个{activeCategory.id === 'events' ? '纪事事件' : '据点'}
                   </span>
                 </div>
 
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+                  {/* All Epochs folder button for events */}
+                  {activeCategory.id === 'events' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedEpochFolderId('all');
+                        setSelectedDatabaseTag(null);
+                      }}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium transition-all shrink-0 border ${
+                        selectedEpochFolderId === 'all'
+                          ? 'bg-amber-500/20 border-amber-500/70 text-amber-200 shadow-md shadow-amber-500/10'
+                          : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                      }`}
+                    >
+                      <History className={`w-3.5 h-3.5 ${selectedEpochFolderId === 'all' ? 'text-amber-400' : 'text-slate-400'}`} />
+                      <span className="font-bold">全部时期事件</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-1 ${
+                        selectedEpochFolderId === 'all' ? 'bg-amber-500/40 text-amber-100' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {entries.filter((e) => e.categoryId === 'events').length}
+                      </span>
+                    </button>
+                  )}
+
                   {(mapData.epochs || []).map((ep) => {
                     const isSelectedFolder = ep.id === selectedEpochFolderId;
-                    const locCount = ep.locations?.length || 0;
+                    const count = activeCategory.id === 'events'
+                      ? entries.filter((e) => e.categoryId === 'events' && (e.epochId === ep.id || (!e.epochId && ep.id === mapData.epochs[0]?.id))).length
+                      : (ep.locations?.length || 0);
+
                     return (
                       <button
                         key={ep.id}
@@ -799,7 +970,7 @@ export default function DatabaseWorkspace() {
                         <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-1 ${
                           isSelectedFolder ? 'bg-amber-500/40 text-amber-100' : 'bg-slate-800 text-slate-400'
                         }`}>
-                          {locCount}
+                          {count}
                         </span>
                       </button>
                     );
@@ -821,7 +992,7 @@ export default function DatabaseWorkspace() {
                     : 'bg-slate-800/80 text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-slate-700/60'
                 }`}
               >
-                全部 ({activeCategory.id === 'locations' ? currentEpochLocations.length : entries.filter((e) => e.categoryId === activeCategory.id).length})
+                全部 ({activeCategory.id === 'locations' ? currentEpochLocations.length : activeCategory.id === 'events' ? filteredEntries.length : entries.filter((e) => e.categoryId === activeCategory.id).length})
               </button>
 
               {activeCategoryTags.map((tag) => {
@@ -1023,6 +1194,8 @@ export default function DatabaseWorkspace() {
                               <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-sky-400 shrink-0 border border-slate-700">
                                 {activeCategory.id === 'locations' || entry.categoryId === 'locations' ? (
                                   <MapPin className="w-5 h-5 text-sky-400" />
+                                ) : activeCategory.id === 'events' || entry.categoryId === 'events' ? (
+                                  <Clock className="w-5 h-5 text-amber-400" />
                                 ) : (
                                   renderIcon(activeCategory.icon, 'w-4 h-4')
                                 )}
@@ -1036,6 +1209,16 @@ export default function DatabaseWorkspace() {
                               {isChar && entry.role && (
                                 <p className="text-[11px] text-indigo-400 font-medium">
                                   {entry.role}
+                                </p>
+                              )}
+                              {(activeCategory.id === 'events' || entry.categoryId === 'events') && (
+                                <p className="text-[11px] text-amber-400 font-medium flex items-center gap-1">
+                                  <span>{mapData.epochs?.find((ep) => ep.id === entry.epochId)?.name || '纪元'}</span>
+                                  <span>·</span>
+                                  <span>{entry.year || 2024}年</span>
+                                  {entry.timeLabel && entry.timeLabel !== `${entry.year}年` && (
+                                    <span className="text-slate-400 font-normal">({entry.timeLabel})</span>
+                                  )}
                                 </p>
                               )}
                             </div>
@@ -1089,6 +1272,66 @@ export default function DatabaseWorkspace() {
                                 </span>
                               )}
                             </div>
+                          </div>
+                        )}
+
+                        {/* Event Three-Element Pill Badges: Time, Location, Characters */}
+                        {(activeCategory.id === 'events' || entry.categoryId === 'events') && (
+                          <div className="bg-slate-950/80 rounded-xl p-2.5 px-3 border border-slate-800 space-y-2">
+                            {/* 1. Time Badge */}
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-1.5 text-amber-300 font-semibold truncate">
+                                <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                <span className="truncate">{entry.timeLabel || `${entry.year || 2024}年`}</span>
+                              </div>
+                              <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-amber-950/70 text-amber-300 border border-amber-800/80 shrink-0">
+                                {mapData.epochs?.find((ep) => ep.id === entry.epochId)?.name || '纪元'} · {entry.year || 2024}年
+                              </span>
+                            </div>
+
+                            {/* 2. Location Badge */}
+                            <div className="flex items-center justify-between text-xs text-sky-300">
+                              <div className="flex items-center gap-1.5 truncate">
+                                <MapPin className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                <span className="font-medium truncate">{entry.locationName || '未定地点'}</span>
+                                {entry.hierarchyText && (
+                                  <span className="text-[10px] text-slate-400 font-normal truncate hidden sm:inline">
+                                    ({entry.hierarchyText})
+                                  </span>
+                                )}
+                              </div>
+                              {typeof entry.lng === 'number' && typeof entry.lat === 'number' && (
+                                <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                                  [{Number(entry.lng).toFixed(2)}°, {Number(entry.lat).toFixed(2)}°]
+                                </span>
+                              )}
+                            </div>
+
+                            {/* 3. Characters Badge */}
+                            {((Array.isArray(entry.characters) && entry.characters.length > 0) || entry.customCharacters) && (
+                              <div className="pt-1 border-t border-slate-800/60 flex items-center gap-1.5 flex-wrap">
+                                <Users className="w-3 h-3 text-indigo-400 shrink-0" />
+                                {Array.isArray(entry.characters) && entry.characters.map((char) => (
+                                  <span
+                                    key={char.id}
+                                    className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-indigo-950/60 border border-indigo-700/50 text-indigo-200"
+                                    title={`${char.name} (${char.role || '参涉人物'})`}
+                                  >
+                                    {char.avatar ? (
+                                      <img src={char.avatar} alt={char.name} className="w-3 h-3 rounded-full object-cover" />
+                                    ) : (
+                                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: char.color || '#818cf8' }} />
+                                    )}
+                                    <span className="font-medium truncate max-w-[80px]">{char.name}</span>
+                                  </span>
+                                ))}
+                                {entry.customCharacters && (
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 font-mono truncate max-w-[120px]" title={entry.customCharacters}>
+                                    {entry.customCharacters}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -1151,7 +1394,7 @@ export default function DatabaseWorkspace() {
                             </span>
                           )}
 
-                          {/* Map Locate Button */}
+                          {/* Map Locate Button for Location or Event */}
                           {(activeCategory.id === 'locations' || entry.categoryId === 'locations') && (
                             <button
                               type="button"
@@ -1167,6 +1410,21 @@ export default function DatabaseWorkspace() {
                               title="在世界地图中定位此据点并查看"
                             >
                               <Compass className="w-3 h-3 text-sky-300" />
+                              <span>地图定位</span>
+                            </button>
+                          )}
+
+                          {(activeCategory.id === 'events' || entry.categoryId === 'events') && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                focusTimelineEvent(entry);
+                              }}
+                              className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500 text-amber-200 hover:text-white border border-amber-500/40 transition-colors shadow-sm ml-1 font-medium"
+                              title="在世界地图中定位并高亮显示此历史事件"
+                            >
+                              <Compass className="w-3 h-3 text-amber-300" />
                               <span>地图定位</span>
                             </button>
                           )}
@@ -1240,6 +1498,21 @@ export default function DatabaseWorkspace() {
                   </button>
                 )}
 
+                {(editingEntry.categoryId === 'events' || activeCategory.id === 'events') && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleCloseDrawer();
+                      focusTimelineEvent(editingEntry);
+                    }}
+                    className="flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500 text-amber-200 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-amber-500/40 transition-colors shadow-sm"
+                    title="在世界地图中定位并高亮显示此事件"
+                  >
+                    <Compass className="w-3.5 h-3.5 text-amber-300" />
+                    <span>在地图中定位</span>
+                  </button>
+                )}
+
                 <button
                   onClick={handleCloseDrawer}
                   className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg border border-slate-700 shadow-sm transition-colors"
@@ -1274,7 +1547,11 @@ export default function DatabaseWorkspace() {
 
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-slate-300 mb-1">
-                    {editingEntry.categoryId === 'locations' || activeCategory.id === 'locations' ? '地点据点名称' : '条目标题 / 道具名称'} <span className="text-rose-400">*</span>
+                    {editingEntry.categoryId === 'locations' || activeCategory.id === 'locations'
+                      ? '地点据点名称'
+                      : editingEntry.categoryId === 'events' || activeCategory.id === 'events'
+                      ? '事件名称 / 历史战役标题'
+                      : '条目标题 / 道具名称'} <span className="text-rose-400">*</span>
                   </label>
                   <input
                     type="text"
@@ -1288,6 +1565,8 @@ export default function DatabaseWorkspace() {
                     placeholder={
                       editingEntry.categoryId === 'locations' || activeCategory.id === 'locations'
                         ? '例如：以太帝都·天穹圣座 / 晨曦港 / 龙息要塞'
+                        : editingEntry.categoryId === 'events' || activeCategory.id === 'events'
+                        ? '例如：布宜诺斯艾利斯和平协定 / 极东防线崩溃 / 第三次世界大战爆发'
                         : '例如：圣辉王印吊坠 / 艾莉丝 (Alice) / 古代以太原石'
                     }
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
@@ -1538,6 +1817,411 @@ export default function DatabaseWorkspace() {
                       <span className="px-2 py-0.5 rounded bg-slate-900 text-amber-300 font-mono text-[11px] border border-amber-500/40">
                         [{Number(editingEntry.lng || 0).toFixed(4)}°, {Number(editingEntry.lat || 0).toFixed(4)}°]
                       </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Event Time, Location, Characters Section */}
+              {(editingEntry.categoryId === 'events' || activeCategory.id === 'events') && (
+                <div className="bg-slate-950/80 border border-amber-500/30 p-4 rounded-xl space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                    <h4 className="text-xs font-bold text-amber-300 flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-amber-400" />
+                      <span>事件核心三要素（时间 · 地点 · 人物）</span>
+                    </h4>
+                    <span className="text-[11px] text-amber-400/80">
+                      保存后自动映射至世界地图与编年总线时间轴
+                    </span>
+                  </div>
+
+                  {/* 1. 时间要素 (Time) */}
+                  <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-3">
+                    <div className="text-xs font-semibold text-amber-200 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                      <span>1. 时间设定 (所属时期与发生年份)</span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-400 mb-1">
+                          所属历史纪元时期 <span className="text-rose-400">*</span>
+                        </label>
+                        <select
+                          value={editingEntry.epochId || mapData.epochs?.[0]?.id || 'epoch-pre-ww3'}
+                          onChange={(e) => {
+                            const newEpochId = e.target.value;
+                            const targetEp = mapData.epochs?.find((ep) => ep.id === newEpochId);
+                            const epMin = targetEp?.timeRange?.[0] ?? 2000;
+                            const epMax = targetEp?.timeRange?.[1] ?? 2100;
+                            const curYear = editingEntry.year ?? epMin;
+                            const clampedYear = Math.max(epMin, Math.min(epMax, curYear));
+                            updateEditingEntry({
+                              epochId: newEpochId,
+                              year: clampedYear,
+                              timeLabel: `${clampedYear}年`
+                            });
+                          }}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-medium"
+                        >
+                          {(mapData.epochs || []).map((ep) => (
+                            <option key={ep.id} value={ep.id}>
+                              {ep.name} ({ep.timeRange?.[0]} ~ {ep.timeRange?.[1]}年)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-[11px] text-slate-400">
+                            发生年份 (限制于时期内) <span className="text-rose-400">*</span>
+                          </label>
+                          <span className="text-[10px] text-amber-300 font-mono font-bold">
+                            {editingEntry.year ?? 2024}年
+                          </span>
+                        </div>
+                        {(() => {
+                          const targetEp = mapData.epochs?.find((ep) => ep.id === (editingEntry.epochId || mapData.epochs?.[0]?.id)) || mapData.epochs?.[0];
+                          const epMin = targetEp?.timeRange?.[0] ?? 2000;
+                          const epMax = targetEp?.timeRange?.[1] ?? 2100;
+                          return (
+                            <div className="space-y-1">
+                              <input
+                                type="number"
+                                min={epMin}
+                                max={epMax}
+                                value={editingEntry.year ?? epMin}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  if (!isNaN(val)) {
+                                    const bounded = Math.max(epMin, Math.min(epMax, val));
+                                    updateEditingEntry({ year: bounded, timeLabel: editingEntry.timeLabel?.includes('年') ? `${bounded}年` : editingEntry.timeLabel });
+                                  }
+                                }}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500"
+                              />
+                              <input
+                                type="range"
+                                min={epMin}
+                                max={epMax}
+                                value={editingEntry.year ?? epMin}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  updateEditingEntry({ year: val, timeLabel: editingEntry.timeLabel?.includes('年') ? `${val}年` : editingEntry.timeLabel });
+                                }}
+                                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                              />
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] text-slate-400 mb-1">
+                          具体日期 / 阶段标签
+                        </label>
+                        <input
+                          type="text"
+                          value={editingEntry.timeLabel || ''}
+                          onChange={(e) => updateEditingEntry({ timeLabel: e.target.value })}
+                          placeholder="例如：2035年9月18日 / 战役前夕"
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2. 地点要素 (Location) */}
+                  <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-sky-200 flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-sky-400" />
+                        <span>2. 地点设定 (地图映射坐标与地理层级)</span>
+                      </div>
+                      {editingEntry.locationName && (
+                        <span className="text-[11px] text-sky-300 font-medium">
+                          当前绑定: <strong>{editingEntry.locationName}</strong>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Quick Select from existing epoch locations */}
+                    <div>
+                      <label className="block text-[11px] text-slate-400 mb-1">
+                        从当前时期已有地图据点快捷选择
+                      </label>
+                      <select
+                        value={editingEntry.locationId || ''}
+                        onChange={(e) => {
+                          const chosenLocId = e.target.value;
+                          if (!chosenLocId) {
+                            updateEditingEntry({ locationId: '', locationName: '' });
+                            return;
+                          }
+                          const curEpochObj = mapData.epochs?.find((ep) => ep.id === (editingEntry.epochId || mapData.currentEpochId));
+                          const foundLoc = (curEpochObj?.locations || []).find((l) => l.id === chosenLocId);
+                          if (foundLoc) {
+                            updateEditingEntry({
+                              locationId: foundLoc.id,
+                              locationName: foundLoc.name || foundLoc.title,
+                              hierarchyText: foundLoc.hierarchyText || '',
+                              continent: foundLoc.continent || '',
+                              country: foundLoc.country || '',
+                              province: foundLoc.province || '',
+                              city: foundLoc.city || '',
+                              lng: foundLoc.lng,
+                              lat: foundLoc.lat
+                            });
+                          }
+                        }}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
+                      >
+                        <option value="">-- 自定义输入或不关联固定据点 --</option>
+                        {(() => {
+                          const curEpochObj = mapData.epochs?.find((ep) => ep.id === (editingEntry.epochId || mapData.currentEpochId));
+                          const locList = curEpochObj?.locations || [];
+                          return locList.map((loc) => (
+                            <option key={loc.id} value={loc.id}>
+                              📍 {loc.name || loc.title} ({loc.hierarchyText || loc.country || '世界据点'}) [{loc.lng?.toFixed(2)}°, {loc.lat?.toFixed(2)}°]
+                            </option>
+                          ));
+                        })()}
+                      </select>
+                    </div>
+
+                    {/* Search administrative division or custom name */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-400 mb-1">
+                          发生地点名称
+                        </label>
+                        <input
+                          type="text"
+                          value={editingEntry.locationName || ''}
+                          onChange={(e) => updateEditingEntry({ locationName: e.target.value })}
+                          placeholder="例如：布宜诺斯艾利斯 / 极东战线"
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
+                        />
+                      </div>
+
+                      <div className="relative">
+                        <label className="block text-[11px] text-slate-400 mb-1">
+                          快速定位行政区（搜索推算坐标）
+                        </label>
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
+                          <input
+                            type="text"
+                            value={divisionQuery}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDivisionQuery(val);
+                              if (val.trim()) {
+                                const res = searchAdministrativeDivisions(val);
+                                setDivisionResults(res);
+                                setIsDivisionDropdownOpen(true);
+                              } else {
+                                setDivisionResults([]);
+                                setIsDivisionDropdownOpen(false);
+                              }
+                            }}
+                            placeholder="输入省市搜索自动填充..."
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-6 py-1.5 text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:border-sky-500"
+                          />
+                          {divisionQuery && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDivisionQuery('');
+                                setDivisionResults([]);
+                                setIsDivisionDropdownOpen(false);
+                              }}
+                              className="absolute right-2 top-2 text-slate-400 hover:text-white"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+
+                        {isDivisionDropdownOpen && divisionResults.length > 0 && (
+                          <div className="absolute z-20 top-full mt-1 left-0 right-0 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-h-40 overflow-y-auto divide-y divide-slate-800">
+                            {divisionResults.map((item, idx) => (
+                              <div
+                                key={idx}
+                                onClick={() => {
+                                  const geo = reverseGeocode(item.lng, item.lat);
+                                  updateEditingEntry({
+                                    locationName: editingEntry.locationName || item.name,
+                                    continent: item.continent || geo.continent,
+                                    country: item.country || geo.country,
+                                    province: item.type === 'province' ? item.name : (geo.province || ''),
+                                    city: item.type === 'province' ? item.name : (geo.city || ''),
+                                    lat: parseFloat(item.lat.toFixed(4)),
+                                    lng: parseFloat(item.lng.toFixed(4)),
+                                    hierarchyText: item.hierarchyText || geo.hierarchyText
+                                  });
+                                  setIsDivisionDropdownOpen(false);
+                                  setDivisionQuery('');
+                                }}
+                                className="p-2 hover:bg-slate-800 cursor-pointer flex items-center justify-between text-xs"
+                              >
+                                <span className="text-white font-medium">{item.name} ({item.hierarchyText})</span>
+                                <span className="text-[10px] text-sky-400 font-mono">[{item.lng.toFixed(2)}°, {item.lat.toFixed(2)}°]</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Coordinates input */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">
+                          经度 (Longitude, -180 ~ 180)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={editingEntry.lng ?? 116.4074}
+                          onChange={(e) => {
+                            const newLng = parseFloat(e.target.value) || 0;
+                            const geo = reverseGeocode(newLng, editingEntry.lat ?? 39.9042);
+                            updateEditingEntry({
+                              lng: newLng,
+                              continent: geo.continent,
+                              country: geo.country,
+                              province: geo.province,
+                              city: geo.city,
+                              hierarchyText: geo.hierarchyText
+                            });
+                          }}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">
+                          纬度 (Latitude, -90 ~ 90)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={editingEntry.lat ?? 39.9042}
+                          onChange={(e) => {
+                            const newLat = parseFloat(e.target.value) || 0;
+                            const geo = reverseGeocode(editingEntry.lng ?? 116.4074, newLat);
+                            updateEditingEntry({
+                              lat: newLat,
+                              continent: geo.continent,
+                              country: geo.country,
+                              province: geo.province,
+                              city: geo.city,
+                              hierarchyText: geo.hierarchyText
+                            });
+                          }}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Hierarchy badge display */}
+                    <div className="bg-slate-950/70 border border-slate-800/80 p-2 rounded-lg flex items-center justify-between text-[11px] text-slate-300">
+                      <span className="flex items-center gap-1.5 text-sky-400 font-medium truncate">
+                        <Globe className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        <span className="truncate">{editingEntry.hierarchyText || '未定地理层级'}</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-300 shrink-0 ml-2">
+                        [{Number(editingEntry.lng ?? 0).toFixed(4)}°, {Number(editingEntry.lat ?? 0).toFixed(4)}°]
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 3. 人物要素 (Characters) */}
+                  <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-indigo-200 flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>3. 参涉人物 (出场角色与参战势力)</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400">
+                        已选择 {(editingEntry.characterIds || []).length} 位人物
+                      </span>
+                    </div>
+
+                    {/* Character Selector Pills from Character Database */}
+                    <div>
+                      <label className="block text-[11px] text-slate-400 mb-1.5">
+                        点击勾选参涉人物档案 (来自人物资料库):
+                      </label>
+                      <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-1.5 rounded-lg bg-slate-950/60 border border-slate-800">
+                        {allCharacters.length === 0 ? (
+                          <div className="text-[11px] text-slate-400 py-1 px-2">
+                            暂无可用的人物档案，可在「人物资料库」中先创建角色。
+                          </div>
+                        ) : (
+                          allCharacters.map((char) => {
+                            const isSelected = (editingEntry.characterIds || []).includes(char.id);
+                            return (
+                              <button
+                                key={char.id}
+                                type="button"
+                                onClick={() => {
+                                  const curIds = [...(editingEntry.characterIds || [])];
+                                  const curChars = [...(editingEntry.characters || [])];
+                                  if (isSelected) {
+                                    const nextIds = curIds.filter((id) => id !== char.id);
+                                    const nextChars = curChars.filter((c) => c.id !== char.id);
+                                    updateEditingEntry({ characterIds: nextIds, characters: nextChars });
+                                  } else {
+                                    const charData = {
+                                      id: char.id,
+                                      name: char.name || char.title || '角色',
+                                      role: char.role || '',
+                                      avatar: char.avatar || char.previewImage || '',
+                                      color: char.color || '#818cf8'
+                                    };
+                                    updateEditingEntry({
+                                      characterIds: [...curIds, char.id],
+                                      characters: [...curChars, charData]
+                                    });
+                                  }
+                                }}
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-all border ${
+                                  isSelected
+                                    ? 'bg-indigo-600/30 border-indigo-400 text-white font-medium shadow-sm'
+                                    : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                                }`}
+                              >
+                                {char.avatar ? (
+                                  <img src={char.avatar} alt={char.name} className="w-3.5 h-3.5 rounded-full object-cover" />
+                                ) : (
+                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: char.color || '#818cf8' }} />
+                                )}
+                                <span>{char.name || char.title}</span>
+                                {char.role && (
+                                  <span className="text-[10px] opacity-70">({char.role})</span>
+                                )}
+                                {isSelected && <Check className="w-3 h-3 text-indigo-300 ml-0.5" />}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Custom Characters / Temporary NPCs or Armies */}
+                    <div>
+                      <label className="block text-[11px] text-slate-400 mb-1">
+                        自定义参涉人员 / 阵营部队 / 临时NPC
+                      </label>
+                      <input
+                        type="text"
+                        value={editingEntry.customCharacters || ''}
+                        onChange={(e) => updateEditingEntry({ customCharacters: e.target.value })}
+                        placeholder="例如：反抗军第7突击联队、神圣修会特使、不知名神秘向导"
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                      />
                     </div>
                   </div>
                 </div>

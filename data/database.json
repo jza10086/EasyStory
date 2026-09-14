@@ -23,10 +23,11 @@
     },
     {
       "id": "events",
-      "name": "历史大事件",
+      "name": "事件资料库",
       "icon": "History",
       "isCharacterType": false,
-      "description": "重大历史转折、政变纪事与编年史大纲"
+      "description": "重大历史事件、战役政变与剧情纪事（关联时间、地点与参涉人物）",
+      "isEventType": true
     },
     {
       "id": "locations",
@@ -158,32 +159,6 @@
       ],
       "previewImage": "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=600&auto=format&fit=crop&q=80",
       "image": "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=600&auto=format&fit=crop&q=80"
-    },
-    {
-      "id": "event-great-shatter",
-      "categoryId": "events",
-      "title": "天裂灾变 (Great Shatter)",
-      "tags": [
-        "历史转折",
-        "远古纪元",
-        "神话"
-      ],
-      "summary": "千年前古代以太过载实验撕裂天幕，导致旧文明沉入地底。",
-      "content": "发生于 1000 年前的灭顶之灾。过量提取地脉能量导致天空破裂，虚空魔物降临，人类旧帝国自此瓦解，退化为城邦格局。",
-      "image": ""
-    },
-    {
-      "id": "event-capital-coup",
-      "categoryId": "events",
-      "title": "王都近卫军流血政变",
-      "tags": [
-        "主线起点",
-        "近期事件",
-        "政变"
-      ],
-      "summary": "半月前帝国大元帅突袭王宫弑君，王储艾莉丝在护卫下秘密出逃。",
-      "content": "主线剧情的直接导火索。大元帅暗中与深渊秘教勾结，夺权后在全境通缉捕杀圣辉王族残脉，艾莉丝逃亡至遗迹迷宫。",
-      "image": ""
     }
   ]
 }

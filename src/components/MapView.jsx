@@ -33,7 +33,9 @@ import {
   ExternalLink,
   ChevronRight,
   Plus,
-  Move
+  Move,
+  Calendar,
+  Users
 } from 'lucide-react';
 
 const COLOR_PRESETS = [
@@ -708,9 +710,315 @@ function CreateLocationModal({ data, currentEpoch, epochs, onClose, onSave }) {
 }
 
 // ---------------------------------------------------------------------------
+// Create/Edit Event Modal on Map (Right-click "在此处新建事件" / Edit)
+// ---------------------------------------------------------------------------
+function CreateEventModal({ data, currentEpoch, epochs, characters = [], onClose, onSave }) {
+  const [form, setForm] = useState(() => ({
+    id: data.id || '',
+    title: data.title || data.name || '',
+    epochId: data.epochId || currentEpoch?.id || epochs[0]?.id || 'epoch-pre-ww3',
+    year: typeof data.year === 'number' ? data.year : (currentEpoch?.timeRange?.[0] ?? 2024),
+    timeLabel: data.timeLabel || `${data.year || 2024}年`,
+    locationId: data.locationId || '',
+    locationName: data.locationName || data.geoInfo?.province || data.geoInfo?.country || '战役发生地',
+    continent: data.continent || data.geoInfo?.continent || '亚洲',
+    country: data.country || data.geoInfo?.country || '',
+    province: data.province || data.geoInfo?.province || '',
+    city: data.city || data.geoInfo?.city || '',
+    hierarchyText: data.hierarchyText || data.geoInfo?.hierarchyText || '',
+    lng: data.lng,
+    lat: data.lat,
+    characterIds: Array.isArray(data.characterIds) ? data.characterIds : [],
+    characters: Array.isArray(data.characters) ? data.characters : [],
+    customCharacters: data.customCharacters || '',
+    tag: data.tags?.[0] || data.tag || '历史事件',
+    color: data.color || '#f59e0b',
+    summary: data.summary || data.description || '',
+    content: data.content || ''
+  }));
+
+  const targetEpoch = epochs.find((ep) => ep.id === form.epochId) || currentEpoch || epochs[0];
+  const epMin = targetEpoch?.timeRange?.[0] ?? 2000;
+  const epMax = targetEpoch?.timeRange?.[1] ?? 2100;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!form.title.trim()) {
+      alert('请填写事件名称');
+      return;
+    }
+    onSave({
+      ...data,
+      id: form.id || `evt-${Date.now().toString(36)}`,
+      categoryId: 'events',
+      title: form.title.trim(),
+      name: form.title.trim(),
+      epochId: form.epochId,
+      year: form.year,
+      timeLabel: form.timeLabel.trim() || `${form.year}年`,
+      locationId: form.locationId || '',
+      locationName: form.locationName.trim(),
+      continent: form.continent,
+      country: form.country,
+      province: form.province,
+      city: form.city,
+      hierarchyText: form.hierarchyText,
+      lng: form.lng,
+      lat: form.lat,
+      characterIds: form.characterIds,
+      characters: form.characters,
+      customCharacters: form.customCharacters.trim(),
+      tag: form.tag,
+      tags: [form.tag],
+      color: form.color,
+      summary: form.summary.trim(),
+      description: form.summary.trim(),
+      content: form.content.trim()
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn select-text"
+      onClick={onClose}
+    >
+      <div
+        className="bg-slate-900 border border-amber-500/40 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col animate-scaleUp max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div className="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-950/60 select-none">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              <Clock className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">
+                {form.id ? '编辑历史纪事事件' : '在当前坐标确立历史事件'}
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                将同时同步至事件资料库与地图编年总线时间轴
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Modal Form */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 text-xs overflow-y-auto flex-1">
+          {/* Location Hierarchy Display */}
+          <div className="bg-gradient-to-r from-amber-950/40 via-slate-950/60 to-sky-950/40 border border-amber-500/30 p-3 rounded-xl space-y-1">
+            <div className="text-[10px] uppercase font-bold text-amber-400 flex items-center gap-1">
+              <Globe className="w-3 h-3" /> 映射坐标与地理隶属
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap font-semibold text-slate-200">
+              <span className="text-sky-300">{form.hierarchyText || form.country || '世界坐标点'}</span>
+              <span className="text-slate-500">·</span>
+              <span className="text-amber-300 font-mono">[{Number(form.lng).toFixed(4)}°, {Number(form.lat).toFixed(4)}°]</span>
+            </div>
+          </div>
+
+          {/* Title & Location Name */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-medium text-slate-300 mb-1">
+                事件名称 / 战役标题 <span className="text-rose-400">*</span>
+              </label>
+              <input
+                type="text"
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                placeholder="例如：布宜诺斯艾利斯和平协定"
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-amber-500"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block font-medium text-slate-300 mb-1">
+                发生地点名
+              </label>
+              <input
+                type="text"
+                value={form.locationName}
+                onChange={(e) => setForm({ ...form, locationName: e.target.value })}
+                placeholder="例如：布宜诺斯艾利斯"
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+          </div>
+
+          {/* Epoch & Year */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-medium text-slate-300 mb-1">
+                所属历史时期 <span className="text-rose-400">*</span>
+              </label>
+              <select
+                value={form.epochId}
+                onChange={(e) => {
+                  const nEpId = e.target.value;
+                  const tEp = epochs.find((ep) => ep.id === nEpId);
+                  const nMin = tEp?.timeRange?.[0] ?? 2000;
+                  const nMax = tEp?.timeRange?.[1] ?? 2100;
+                  const nYear = Math.max(nMin, Math.min(nMax, form.year));
+                  setForm({ ...form, epochId: nEpId, year: nYear, timeLabel: `${nYear}年` });
+                }}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-amber-500 font-medium"
+              >
+                {epochs.map((ep) => (
+                  <option key={ep.id} value={ep.id}>
+                    {ep.name} ({ep.timeRange?.[0]} ~ {ep.timeRange?.[1]}年)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-medium text-slate-300">
+                  发生年份 ({epMin} ~ {epMax})
+                </label>
+                <span className="text-[10px] font-mono text-amber-300 font-bold">{form.year}年</span>
+              </div>
+              <input
+                type="number"
+                min={epMin}
+                max={epMax}
+                value={form.year}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val)) {
+                    const bounded = Math.max(epMin, Math.min(epMax, val));
+                    setForm({ ...form, year: bounded, timeLabel: form.timeLabel.includes('年') ? `${bounded}年` : form.timeLabel });
+                  }
+                }}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-amber-500"
+              />
+            </div>
+          </div>
+
+          {/* Time label / Phase */}
+          <div>
+            <label className="block font-medium text-slate-300 mb-1">具体日期 / 阶段标签</label>
+            <input
+              type="text"
+              value={form.timeLabel}
+              onChange={(e) => setForm({ ...form, timeLabel: e.target.value })}
+              placeholder="例如：2035年9月18日 / 决战黎明前夕"
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-amber-500"
+            />
+          </div>
+
+          {/* Involved Characters Selector */}
+          <div>
+            <label className="block font-medium text-slate-300 mb-1">
+              参涉人物勾选 (来自人物档案库)
+            </label>
+            <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-2 bg-slate-950/70 border border-slate-800 rounded-lg">
+              {characters.length === 0 ? (
+                <span className="text-slate-500 text-[10px]">人物库暂无角色，可先在资料库创建</span>
+              ) : (
+                characters.map((char) => {
+                  const isSelected = form.characterIds.includes(char.id);
+                  return (
+                    <button
+                      key={char.id}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          setForm({
+                            ...form,
+                            characterIds: form.characterIds.filter((id) => id !== char.id),
+                            characters: form.characters.filter((c) => c.id !== char.id)
+                          });
+                        } else {
+                          setForm({
+                            ...form,
+                            characterIds: [...form.characterIds, char.id],
+                            characters: [
+                              ...form.characters,
+                              {
+                                id: char.id,
+                                name: char.name || char.title,
+                                role: char.role || '',
+                                avatar: char.avatar || '',
+                                color: char.color || '#818cf8'
+                              }
+                            ]
+                          });
+                        }
+                      }}
+                      className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border transition-all ${
+                        isSelected
+                          ? 'bg-indigo-600/30 border-indigo-400 text-white font-medium'
+                          : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span>{char.name || char.title}</span>
+                      {isSelected && <Check className="w-2.5 h-2.5 text-indigo-300" />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Custom Characters / Factions */}
+          <div>
+            <label className="block font-medium text-slate-300 mb-1">其他参涉势力 / 临时角色</label>
+            <input
+              type="text"
+              value={form.customCharacters}
+              onChange={(e) => setForm({ ...form, customCharacters: e.target.value })}
+              placeholder="例如：反抗军第7装甲旅、神秘先知"
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-amber-500"
+            />
+          </div>
+
+          {/* Summary */}
+          <div>
+            <label className="block font-medium text-slate-300 mb-1">事件简述 / 剧情概要</label>
+            <textarea
+              rows={2}
+              value={form.summary}
+              onChange={(e) => setForm({ ...form, summary: e.target.value })}
+              placeholder="简要概括该事件的经过、起因及对地缘历史的影响..."
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-amber-500 resize-none"
+            />
+          </div>
+
+          {/* Modal Footer */}
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800 select-none">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl font-medium transition-colors"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-semibold shadow-md shadow-amber-600/20 transition-all flex items-center gap-1.5"
+            >
+              <Check className="w-4 h-4" />
+              <span>保存纪事事件</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Singleton Location Detail Popover on Map
 // ---------------------------------------------------------------------------
-function LocationDetailCard({ location, currentEpoch, onClose, onEdit, onMove, onDelete, onOpenDatabase }) {
+function LocationDetailCard({ location, currentEpoch, relatedEvents = [], onClose, onEdit, onMove, onDelete, onOpenDatabase, onSelectEvent }) {
   if (!location) return null;
   const themeColor = location.color || '#38bdf8';
 
@@ -769,6 +1077,35 @@ function LocationDetailCard({ location, currentEpoch, onClose, onEdit, onMove, o
         {location.description || location.summary || '暂无详细设定描述...'}
       </p>
 
+      {/* Related events occurred here */}
+      {relatedEvents && relatedEvents.length > 0 && (
+        <div className="bg-slate-950/70 border border-slate-800/80 p-2.5 rounded-xl space-y-1.5">
+          <div className="text-[11px] font-semibold text-amber-300 flex items-center justify-between">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>发生在此处的历史纪事 ({relatedEvents.length})</span>
+            </span>
+          </div>
+          <div className="space-y-1 max-h-24 overflow-y-auto">
+            {relatedEvents.map((evt) => (
+              <div
+                key={evt.id}
+                onClick={() => onSelectEvent(evt)}
+                className="flex items-center justify-between p-1.5 rounded-lg bg-slate-900/80 hover:bg-amber-500/15 cursor-pointer border border-slate-800/60 hover:border-amber-500/40 transition-colors"
+              >
+                <div className="flex items-center gap-1.5 truncate">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                  <span className="font-semibold text-slate-100 truncate">{evt.title || evt.name}</span>
+                </div>
+                <span className="text-[10px] font-mono text-amber-300 shrink-0 ml-1">
+                  {evt.year}年
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Action Buttons */}
       <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
         <button
@@ -809,7 +1146,131 @@ function LocationDetailCard({ location, currentEpoch, onClose, onEdit, onMove, o
 }
 
 // ---------------------------------------------------------------------------
-// Right-Click Context Menu for Map & Locations
+// Singleton Event Detail Popover on Map
+// ---------------------------------------------------------------------------
+function EventDetailCard({ event, currentEpoch, onClose, onEdit, onDelete, onOpenDatabase }) {
+  if (!event) return null;
+
+  return (
+    <div className="absolute top-16 right-6 z-30 w-84 bg-slate-900/95 backdrop-blur-md border border-amber-500/40 rounded-2xl shadow-2xl p-4 text-xs text-slate-200 select-none animate-fadeIn space-y-3">
+      {/* Top accent line */}
+      <div className="absolute top-0 left-0 right-0 h-1.5 rounded-t-2xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-600" />
+
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 pt-1">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-md shrink-0 bg-gradient-to-tr from-amber-500 to-yellow-500">
+            <Clock className="w-4 h-4 drop-shadow text-white" />
+          </div>
+          <div>
+            <h4 className="font-bold text-sm text-white flex items-center gap-1.5">
+              <span>{event.title || event.name}</span>
+            </h4>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-amber-300">
+              <span>{currentEpoch?.name || '历史时期'}</span>
+              <span>·</span>
+              <span className="font-bold">{event.year || 2024}年</span>
+              {event.timeLabel && event.timeLabel !== `${event.year}年` && (
+                <span className="text-slate-400 font-sans">({event.timeLabel})</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Location Badge */}
+      <div className="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800 space-y-1">
+        <div className="text-[11px] text-sky-300 font-semibold flex items-center gap-1.5">
+          <MapPin className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+          <span className="truncate">{event.locationName || '未指定据点'}</span>
+          {event.hierarchyText && (
+            <span className="text-[10px] text-slate-400 font-normal truncate">
+              ({event.hierarchyText})
+            </span>
+          )}
+        </div>
+        {typeof event.lng === 'number' && typeof event.lat === 'number' && (
+          <div className="text-[10px] text-slate-400 font-mono">
+            坐标: [{Number(event.lng).toFixed(4)}°, {Number(event.lat).toFixed(4)}°]
+          </div>
+        )}
+      </div>
+
+      {/* Involved Characters */}
+      {((Array.isArray(event.characters) && event.characters.length > 0) || event.customCharacters) && (
+        <div className="bg-slate-950/70 rounded-xl p-2.5 border border-slate-800 space-y-1.5">
+          <div className="text-[10px] uppercase font-bold text-indigo-300 flex items-center gap-1">
+            <Users className="w-3 h-3 text-indigo-400" /> 参涉人物与部队
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {Array.isArray(event.characters) && event.characters.map((char) => (
+              <span
+                key={char.id}
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-indigo-950/60 border border-indigo-700/50 text-indigo-200"
+              >
+                {char.avatar ? (
+                  <img src={char.avatar} alt={char.name} className="w-3 h-3 rounded-full object-cover" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: char.color || '#818cf8' }} />
+                )}
+                <span className="font-medium">{char.name}</span>
+                {char.role && <span className="opacity-70 text-[9px]">({char.role})</span>}
+              </span>
+            ))}
+            {event.customCharacters && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 font-mono">
+                {event.customCharacters}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Description / Summary */}
+      <p className="text-slate-300 leading-relaxed max-h-28 overflow-y-auto">
+        {event.summary || event.description || event.content || '暂无详细纪事描述...'}
+      </p>
+
+      {/* Action Buttons */}
+      <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+        <button
+          onClick={() => onOpenDatabase(event)}
+          className="flex-1 flex items-center justify-center gap-1.5 bg-amber-500/20 hover:bg-amber-500 text-amber-200 hover:text-white py-1.5 px-2.5 rounded-xl border border-amber-500/40 transition-colors font-medium shadow-sm text-[11px]"
+          title="在资料库事件档案中查看并编辑完整 Markdown 纪事"
+        >
+          <ExternalLink className="w-3 h-3" />
+          <span>资料库中打开</span>
+        </button>
+
+        <button
+          onClick={() => onEdit(event)}
+          className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors"
+          title="编辑此事件"
+        >
+          <Edit2 className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={() => onDelete(event)}
+          className="p-1.5 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white rounded-xl border border-slate-700 transition-colors"
+          title="删除此事件"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Right-Click Context Menu for Map, Locations & Events
 // ---------------------------------------------------------------------------
 function MapContextMenu({
   contextMenu,
@@ -817,11 +1278,15 @@ function MapContextMenu({
   movingLocation,
   onClose,
   onCreate,
+  onCreateEvent,
   onEdit,
+  onEditEvent,
   onStartMove,
   onExecuteMove,
   onDelete,
-  onOpenDatabase
+  onDeleteEvent,
+  onOpenDatabase,
+  onOpenDatabaseForEvent
 }) {
   const menuRef = useRef(null);
   const [pos, setPos] = useState({ x: contextMenu.x, y: contextMenu.y });
@@ -853,6 +1318,7 @@ function MapContextMenu({
     return () => window.removeEventListener('pointerdown', handlePointerDown);
   }, [onClose]);
 
+  const targetEvent = contextMenu.targetEvent;
   const target = contextMenu.targetLocation;
   const activeLoc = target || movingLocation || selectedLocation;
 
@@ -864,7 +1330,25 @@ function MapContextMenu({
       onClick={(e) => e.stopPropagation()}
     >
       {/* Header */}
-      {target ? (
+      {targetEvent ? (
+        <div className="px-2.5 py-1.5 mb-1.5 bg-slate-950/70 rounded-lg border border-amber-500/40">
+          <div className="flex items-center gap-2 font-bold text-white truncate">
+            <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="truncate">{targetEvent.title || targetEvent.name}</span>
+            <span className="ml-auto text-[10px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800 shrink-0 font-normal">
+              {targetEvent.year ? `${targetEvent.year}年` : '纪事'}
+            </span>
+          </div>
+          <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">
+            {targetEvent.locationName || targetEvent.hierarchyText || '地图事件'}
+          </div>
+          {typeof targetEvent.lng === 'number' && typeof targetEvent.lat === 'number' && (
+            <div className="text-[9px] text-slate-500 font-mono">
+              [{Number(targetEvent.lng).toFixed(4)}°, {Number(targetEvent.lat).toFixed(4)}°]
+            </div>
+          )}
+        </div>
+      ) : target ? (
         <div className="px-2.5 py-1.5 mb-1.5 bg-slate-950/70 rounded-lg border border-slate-800/80">
           <div className="flex items-center gap-2 font-bold text-white truncate">
             <span
@@ -900,102 +1384,163 @@ function MapContextMenu({
 
       {/* Menu Actions */}
       <div className="space-y-0.5">
-        {/* 1. Create Location Here */}
-        <button
-          onClick={() => {
-            onCreate({
-              lng: contextMenu.lng,
-              lat: contextMenu.lat,
-              geoInfo: contextMenu.geoInfo
-            });
-            onClose();
-          }}
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-sky-600/25 transition-colors group"
-        >
-          <Plus className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform shrink-0" />
-          <span className="flex-1 font-medium">在此处新建地点</span>
-        </button>
-
-        {/* 2. Relocate to Here */}
-        {!target && activeLoc && (
-          <button
-            onClick={() => {
-              onExecuteMove(activeLoc, {
-                lng: contextMenu.lng,
-                lat: contextMenu.lat,
-                geoInfo: contextMenu.geoInfo
-              });
-              onClose();
-            }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-cyan-300 hover:text-white hover:bg-cyan-600/30 transition-colors group border border-cyan-500/30 bg-cyan-950/30"
-          >
-            <Move className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform shrink-0" />
-            <span className="flex-1 font-medium truncate">
-              将「{activeLoc.name || activeLoc.title}」移动到此处
-            </span>
-          </button>
-        )}
-
-        {/* 3. Edit Location */}
-        {activeLoc && (
-          <button
-            onClick={() => {
-              onEdit(activeLoc);
-              onClose();
-            }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-slate-800 transition-colors group"
-          >
-            <Edit2 className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
-            <span className="flex-1 font-medium truncate">
-              {target ? '编辑此地点' : `编辑已选地点「${activeLoc.name || activeLoc.title}」`}
-            </span>
-          </button>
-        )}
-
-        {/* 4. Move Location */}
-        {target && (
-          <button
-            onClick={() => {
-              onStartMove(target);
-              onClose();
-            }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-slate-800 transition-colors group"
-          >
-            <Move className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform shrink-0" />
-            <span className="flex-1 font-medium">移动此地点 (在地图重放)</span>
-          </button>
-        )}
-
-        {/* 5. Delete Location */}
-        {activeLoc && (
-          <button
-            onClick={() => {
-              onDelete(activeLoc);
-              onClose();
-            }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-rose-400 hover:text-rose-200 hover:bg-rose-600/20 transition-colors group"
-          >
-            <Trash2 className="w-3.5 h-3.5 text-rose-400 group-hover:scale-110 transition-transform shrink-0" />
-            <span className="flex-1 font-medium truncate">
-              {target ? '删除此地点' : `删除已选地点「${activeLoc.name || activeLoc.title}」`}
-            </span>
-          </button>
-        )}
-
-        {/* 6. Open in Database */}
-        {activeLoc && (
+        {targetEvent ? (
           <>
-            <div className="h-px bg-slate-800 my-1" />
+            {/* Edit Event */}
             <button
               onClick={() => {
-                onOpenDatabase(activeLoc);
+                onEditEvent(targetEvent);
                 onClose();
               }}
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-300 hover:text-white hover:bg-slate-800 transition-colors group"
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-slate-800 transition-colors group"
             >
-              <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:scale-110 transition-transform shrink-0" />
-              <span className="flex-1">在资料库中打开</span>
+              <Edit2 className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
+              <span className="flex-1 font-medium truncate">编辑此事件</span>
             </button>
+
+            {/* Delete Event */}
+            <button
+              onClick={() => {
+                onDeleteEvent(targetEvent);
+                onClose();
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-rose-400 hover:text-rose-200 hover:bg-rose-600/20 transition-colors group"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400 group-hover:scale-110 transition-transform shrink-0" />
+              <span className="flex-1 font-medium truncate">删除此事件</span>
+            </button>
+
+            <div className="h-px bg-slate-800 my-1" />
+
+            {/* Open Event in Database */}
+            <button
+              onClick={() => {
+                onOpenDatabaseForEvent(targetEvent);
+                onClose();
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-amber-300 hover:text-white hover:bg-amber-600/20 transition-colors group"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
+              <span className="flex-1 font-medium">在资料库事件中打开</span>
+            </button>
+          </>
+        ) : (
+          <>
+            {/* 1. Create Location Here */}
+            <button
+              onClick={() => {
+                onCreate({
+                  lng: contextMenu.lng,
+                  lat: contextMenu.lat,
+                  geoInfo: contextMenu.geoInfo
+                });
+                onClose();
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-sky-600/25 transition-colors group"
+            >
+              <Plus className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform shrink-0" />
+              <span className="flex-1 font-medium">在此处新建地点</span>
+            </button>
+
+            {/* 2. Create Event Here */}
+            <button
+              onClick={() => {
+                onCreateEvent({
+                  lng: contextMenu.lng,
+                  lat: contextMenu.lat,
+                  geoInfo: contextMenu.geoInfo,
+                  targetLocation: target
+                });
+                onClose();
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-amber-300 hover:text-white hover:bg-amber-600/25 transition-colors group"
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
+              <span className="flex-1 font-medium">在此处新建事件</span>
+            </button>
+
+            {/* 3. Relocate to Here */}
+            {!target && activeLoc && (
+              <button
+                onClick={() => {
+                  onExecuteMove(activeLoc, {
+                    lng: contextMenu.lng,
+                    lat: contextMenu.lat,
+                    geoInfo: contextMenu.geoInfo
+                  });
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-cyan-300 hover:text-white hover:bg-cyan-600/30 transition-colors group border border-cyan-500/30 bg-cyan-950/30"
+              >
+                <Move className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform shrink-0" />
+                <span className="flex-1 font-medium truncate">
+                  将「{activeLoc.name || activeLoc.title}」移动到此处
+                </span>
+              </button>
+            )}
+
+            {/* 4. Edit Location */}
+            {activeLoc && (
+              <button
+                onClick={() => {
+                  onEdit(activeLoc);
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-slate-800 transition-colors group"
+              >
+                <Edit2 className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
+                <span className="flex-1 font-medium truncate">
+                  {target ? '编辑此地点' : `编辑已选地点「${activeLoc.name || activeLoc.title}」`}
+                </span>
+              </button>
+            )}
+
+            {/* 5. Move Location */}
+            {target && (
+              <button
+                onClick={() => {
+                  onStartMove(target);
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-200 hover:text-white hover:bg-slate-800 transition-colors group"
+              >
+                <Move className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform shrink-0" />
+                <span className="flex-1 font-medium">移动此地点 (在地图重放)</span>
+              </button>
+            )}
+
+            {/* 6. Delete Location */}
+            {activeLoc && (
+              <button
+                onClick={() => {
+                  onDelete(activeLoc);
+                  onClose();
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-rose-400 hover:text-rose-200 hover:bg-rose-600/20 transition-colors group"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400 group-hover:scale-110 transition-transform shrink-0" />
+                <span className="flex-1 font-medium truncate">
+                  {target ? '删除此地点' : `删除已选地点「${activeLoc.name || activeLoc.title}」`}
+                </span>
+              </button>
+            )}
+
+            {/* 7. Open in Database */}
+            {activeLoc && (
+              <>
+                <div className="h-px bg-slate-800 my-1" />
+                <button
+                  onClick={() => {
+                    onOpenDatabase(activeLoc);
+                    onClose();
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-slate-300 hover:text-white hover:bg-slate-800 transition-colors group"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:scale-110 transition-transform shrink-0" />
+                  <span className="flex-1">在资料库中打开</span>
+                </button>
+              </>
+            )}
           </>
         )}
       </div>
@@ -1005,6 +1550,7 @@ function MapContextMenu({
 
 export default function MapView({ isActive = true }) {
   const mapData = useStoryStore((s) => s.mapData) || {};
+  const database = useStoryStore((s) => s.database) || { categories: [], entries: [] };
   const setTimelineBounds = useStoryStore((s) => s.setTimelineBounds);
   const setCurrentEpochId = useStoryStore((s) => s.setCurrentEpochId);
   const selectEpoch = useStoryStore((s) => s.selectEpoch);
@@ -1016,6 +1562,13 @@ export default function MapView({ isActive = true }) {
   const selectedMapLocationId = useStoryStore((s) => s.selectedMapLocationId);
   const setSelectedMapLocationId = useStoryStore((s) => s.setSelectedMapLocationId);
   const setActiveDatabaseCategory = useStoryStore((s) => s.setActiveDatabaseCategory);
+
+  const addTimelineEvent = useStoryStore((s) => s.addTimelineEvent);
+  const updateTimelineEvent = useStoryStore((s) => s.updateTimelineEvent);
+  const deleteTimelineEvent = useStoryStore((s) => s.deleteTimelineEvent);
+  const focusTimelineEvent = useStoryStore((s) => s.focusTimelineEvent);
+  const selectedTimelineEventId = useStoryStore((s) => s.selectedTimelineEventId);
+  const setSelectedTimelineEventId = useStoryStore((s) => s.setSelectedTimelineEventId);
 
   const timelineSettings = mapData.timelineSettings || {
     minYear: 2000,
@@ -1230,6 +1783,32 @@ export default function MapView({ isActive = true }) {
   const [activeLocationCard, setActiveLocationCard] = useState(null);
   const locationMarkersRef = useRef([]);
 
+  // Event card and creation modal states
+  const [activeEventCard, setActiveEventCard] = useState(null);
+  const [creatingEventData, setCreatingEventData] = useState(null);
+  const eventMarkersRef = useRef([]);
+
+  // Characters from database for event involvement
+  const allCharacters = useMemo(() => {
+    return (database.entries || []).filter((e) => e.categoryId === 'characters');
+  }, [database.entries]);
+
+  // Events belonging to current epoch
+  const epochEvents = useMemo(() => {
+    return (mapData.timeline || []).filter((evt) => {
+      if (evt.epochId && evt.epochId !== currentEpochId) return false;
+      return true;
+    });
+  }, [mapData.timeline, currentEpochId]);
+
+  // Visible events constrained by current timeline slider [clampedLeft, clampedRight]
+  const visibleTimelineEvents = useMemo(() => {
+    return epochEvents.filter((evt) => {
+      if (typeof evt.year !== 'number') return true;
+      return evt.year >= clampedLeft && evt.year <= clampedRight;
+    });
+  }, [epochEvents, clampedLeft, clampedRight]);
+
   // Context menu and moving mode states
   const [contextMenu, setContextMenu] = useState(null);
   const [movingLocation, setMovingLocation] = useState(null);
@@ -1409,6 +1988,87 @@ export default function MapView({ isActive = true }) {
       }
     },
     [deleteEpochLocation, setSelectedMapLocationId]
+  );
+
+  const handleCreateEventAt = useCallback(
+    ({ lng, lat, geoInfo, targetLocation }) => {
+      const clickedLng = parseFloat(lng.toFixed(4));
+      const clickedLat = parseFloat(lat.toFixed(4));
+      const gInfo = geoInfo || reverseGeocode(clickedLng, clickedLat);
+      const locName = targetLocation
+        ? targetLocation.name || targetLocation.title
+        : gInfo.province || gInfo.country || '未命名据点';
+
+      const initialYear = Math.max(epochMin, Math.min(epochMax, activeLeftRef.current || 2024));
+
+      setCreatingEventData({
+        title: '',
+        name: '',
+        epochId: currentEpochRef.current?.id || 'epoch-pre-ww3',
+        year: initialYear,
+        timeLabel: `${initialYear}年`,
+        locationId: targetLocation?.id || '',
+        locationName: locName,
+        continent: targetLocation?.continent || gInfo.continent || '',
+        country: targetLocation?.country || gInfo.country || '',
+        province: targetLocation?.province || gInfo.province || '',
+        city: targetLocation?.city || gInfo.city || '',
+        hierarchyText: targetLocation?.hierarchyText || gInfo.hierarchyText || '',
+        lng: clickedLng,
+        lat: clickedLat,
+        characterIds: [],
+        characters: [],
+        customCharacters: '',
+        tag: '历史事件',
+        tags: ['历史事件'],
+        color: '#f59e0b',
+        summary: '',
+        content: ''
+      });
+    },
+    [epochMin, epochMax]
+  );
+
+  const handleEditEvent = useCallback((evt) => {
+    if (!evt) return;
+    setActiveEventCard(null);
+    setCreatingEventData({ ...evt });
+  }, []);
+
+  const handleDeleteEvent = useCallback(
+    async (evt) => {
+      if (!evt) return;
+      if (confirm(`确定要删除历史事件“${evt.title || evt.name}”吗？`)) {
+        await deleteTimelineEvent(evt.id);
+        setActiveEventCard(null);
+        setSelectedTimelineEventId(null);
+      }
+    },
+    [deleteTimelineEvent, setSelectedTimelineEventId]
+  );
+
+  const handleOpenDatabaseForEvent = useCallback(
+    (evt) => {
+      setActiveEventCard(null);
+      setSelectedTimelineEventId(evt.id);
+      setActiveDatabaseCategory('events');
+      setActiveWorkspace('database');
+    },
+    [setActiveDatabaseCategory, setActiveWorkspace, setSelectedTimelineEventId]
+  );
+
+  const handleSaveEvent = useCallback(
+    async (eventData) => {
+      if (eventData.id) {
+        await updateTimelineEvent(eventData.id, eventData);
+        setActiveEventCard(eventData);
+      } else {
+        const created = await addTimelineEvent(eventData);
+        setActiveEventCard(created);
+      }
+      setCreatingEventData(null);
+    },
+    [addTimelineEvent, updateTimelineEvent]
   );
 
   // MapLibre refs
@@ -2149,6 +2809,75 @@ export default function MapView({ isActive = true }) {
     });
   }, [currentEpoch, currentEpoch?.locations, selectedMapLocationId, setSelectedMapLocationId]);
 
+  // Synchronize MapLibre Markers for visible events (filtered by current epoch & clampedLeft ~ clampedRight)
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !isMapLoadedRef.current) return;
+
+    // Remove old event markers
+    eventMarkersRef.current.forEach((marker) => marker.remove());
+    eventMarkersRef.current = [];
+
+    visibleTimelineEvents.forEach((evt) => {
+      if (typeof evt.lng !== 'number' || typeof evt.lat !== 'number') return;
+
+      const el = document.createElement('div');
+      el.className = 'event-marker-pin group relative cursor-pointer select-none';
+      el.style.width = '32px';
+      el.style.height = '36px';
+
+      const isSelected = selectedTimelineEventId === evt.id;
+      const evtColor = evt.color || '#f59e0b';
+
+      el.innerHTML = `
+        <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
+          <div style="width: 26px; height: 26px; border-radius: 6px; transform: rotate(45deg) ${isSelected ? 'scale(1.3)' : 'scale(1)'}; background: linear-gradient(135deg, ${evtColor}, #f59e0b); border: 2px solid #ffffff; box-shadow: 0 0 12px ${evtColor}, 0 3px 8px rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; transition: transform 0.2s ease;">
+            <svg style="width: 14px; height: 14px; fill: white; transform: rotate(-45deg);" viewBox="0 0 24 24">
+              <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z"/>
+            </svg>
+          </div>
+          <div style="position: absolute; bottom: 32px; background: rgba(15, 23, 42, 0.95); color: #fef08a; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(245, 158, 11, 0.5); white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.6); pointer-events: none; display: flex; align-items: center; gap: 4px;">
+            <span style="color: #fbbf24; font-family: monospace;">${evt.year ? `${evt.year}年` : ''}</span>
+            <span style="color: #f8fafc;">${evt.title || evt.name || '纪事'}</span>
+          </div>
+        </div>
+      `;
+
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setContextMenu(null);
+        setSelectedTimelineEventId(evt.id);
+        setActiveEventCard(evt);
+        setActiveLocationCard(null);
+      });
+
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const geoInfo = reverseGeocode(evt.lng, evt.lat);
+        setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          lng: evt.lng,
+          lat: evt.lat,
+          geoInfo,
+          targetLocation: null,
+          targetEvent: evt
+        });
+      });
+
+      try {
+        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([evt.lng, evt.lat])
+          .addTo(map);
+
+        eventMarkersRef.current.push(marker);
+      } catch (err) {
+        console.warn('Failed to add event marker:', err);
+      }
+    });
+  }, [visibleTimelineEvents, selectedTimelineEventId, setSelectedTimelineEventId]);
+
   // Fly to location when selected
   useEffect(() => {
     if (!selectedMapLocationId || !mapInstanceRef.current || !isMapLoadedRef.current) return;
@@ -2164,6 +2893,37 @@ export default function MapView({ isActive = true }) {
       });
     }
   }, [selectedMapLocationId, currentEpoch]);
+
+  // Fly to event when selected
+  useEffect(() => {
+    if (!selectedTimelineEventId || !mapInstanceRef.current || !isMapLoadedRef.current) return;
+    const evt = (mapData.timeline || []).find((t) => t.id === selectedTimelineEventId);
+    if (evt && typeof evt.lng === 'number' && typeof evt.lat === 'number') {
+      setActiveEventCard(evt);
+      mapInstanceRef.current.flyTo({
+        center: [evt.lng, evt.lat],
+        zoom: Math.max(mapInstanceRef.current.getZoom(), 5.5),
+        speed: 1.2,
+        curve: 1.42,
+        essential: true
+      });
+    }
+  }, [selectedTimelineEventId, mapData.timeline]);
+
+  // Related events for selected location
+  const relatedEventsForSelectedLocation = useMemo(() => {
+    if (!activeLocationCard) return [];
+    return (mapData.timeline || []).filter((e) => {
+      if (e.locationId && e.locationId === activeLocationCard.id) return true;
+      if (typeof e.lng === 'number' && typeof e.lat === 'number') {
+        return (
+          Math.abs(e.lng - activeLocationCard.lng) < 0.005 &&
+          Math.abs(e.lat - activeLocationCard.lat) < 0.005
+        );
+      }
+      return false;
+    });
+  }, [activeLocationCard, mapData.timeline]);
 
   const handleOpenDatabaseForLocation = (loc) => {
     setActiveLocationCard(null);
@@ -2297,6 +3057,7 @@ export default function MapView({ isActive = true }) {
           <LocationDetailCard
             location={activeLocationCard}
             currentEpoch={currentEpoch}
+            relatedEvents={relatedEventsForSelectedLocation}
             onClose={() => {
               setActiveLocationCard(null);
               setSelectedMapLocationId(null);
@@ -2305,6 +3066,26 @@ export default function MapView({ isActive = true }) {
             onMove={handleStartMove}
             onDelete={handleDeleteLocation}
             onOpenDatabase={handleOpenDatabaseForLocation}
+            onSelectEvent={(evt) => {
+              setActiveLocationCard(null);
+              setSelectedTimelineEventId(evt.id);
+              setActiveEventCard(evt);
+            }}
+          />
+        )}
+
+        {/* Selected Event Card Popover on Map */}
+        {activeEventCard && (
+          <EventDetailCard
+            event={activeEventCard}
+            currentEpoch={currentEpoch}
+            onClose={() => {
+              setActiveEventCard(null);
+              setSelectedTimelineEventId(null);
+            }}
+            onEdit={handleEditEvent}
+            onDelete={handleDeleteEvent}
+            onOpenDatabase={handleOpenDatabaseForEvent}
           />
         )}
 
@@ -2316,11 +3097,15 @@ export default function MapView({ isActive = true }) {
             movingLocation={movingLocation}
             onClose={() => setContextMenu(null)}
             onCreate={handleCreateLocationAt}
+            onCreateEvent={handleCreateEventAt}
             onEdit={handleEditLocation}
+            onEditEvent={handleEditEvent}
             onStartMove={handleStartMove}
             onExecuteMove={handleExecuteMove}
             onDelete={handleDeleteLocation}
+            onDeleteEvent={handleDeleteEvent}
             onOpenDatabase={handleOpenDatabaseForLocation}
+            onOpenDatabaseForEvent={handleOpenDatabaseForEvent}
           />
         )}
       </div>
@@ -2348,6 +3133,17 @@ export default function MapView({ isActive = true }) {
             setActiveLocationCard(locData);
             setSelectedMapLocationId(locData.id);
           }}
+        />
+      )}
+
+      {creatingEventData && (
+        <CreateEventModal
+          data={creatingEventData}
+          currentEpoch={currentEpoch}
+          epochs={epochs}
+          characters={allCharacters}
+          onClose={() => setCreatingEventData(null)}
+          onSave={handleSaveEvent}
         />
       )}
 
@@ -2522,6 +3318,51 @@ export default function MapView({ isActive = true }) {
                   width: `${Math.max(0, rightPercent - leftPercent)}%`
                 }}
               />
+
+              {/* Event Dots on Total Timeline Track */}
+              {epochEvents.map((evt) => {
+                if (typeof evt.year !== 'number') return null;
+                const dotPercent = Math.max(0, Math.min(100, ((evt.year - totalMin) / totalSpan) * 100));
+                const isSelected = selectedTimelineEventId === evt.id;
+                const isInRange = evt.year >= clampedLeft && evt.year <= clampedRight;
+
+                return (
+                  <div
+                    key={evt.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedTimelineEventId(evt.id);
+                      setActiveEventCard(evt);
+                      if (typeof evt.lng === 'number' && typeof evt.lat === 'number' && mapInstanceRef.current) {
+                        mapInstanceRef.current.flyTo({
+                          center: [evt.lng, evt.lat],
+                          zoom: Math.max(mapInstanceRef.current.getZoom(), 5.5),
+                          speed: 1.2
+                        });
+                      }
+                    }}
+                    style={{ left: `${dotPercent}%` }}
+                    className={`absolute -translate-x-1/2 w-3 h-3 rounded-full transition-all cursor-pointer group z-15 ${
+                      isSelected
+                        ? 'ring-4 ring-amber-400 scale-125 bg-amber-300 shadow-lg shadow-amber-500'
+                        : isInRange
+                        ? 'bg-amber-400 hover:scale-125 hover:bg-yellow-300 ring-2 ring-slate-900 shadow-sm'
+                        : 'bg-amber-700/60 hover:scale-110 ring-1 ring-slate-900 opacity-60'
+                    }`}
+                    title={`[${evt.year}年] ${evt.title || evt.name}${evt.locationName ? ` · ${evt.locationName}` : ''} (点击定位)`}
+                  >
+                    {/* Tooltip on hover */}
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:flex flex-col items-center pointer-events-none z-30">
+                      <div className="bg-slate-900/95 border border-amber-500/50 text-white text-[10px] px-2 py-0.5 rounded shadow-xl whitespace-nowrap flex items-center gap-1">
+                        <Clock className="w-2.5 h-2.5 text-amber-400" />
+                        <span className="font-bold text-amber-300 font-mono">{evt.year}年</span>
+                        <span className="text-slate-200">{evt.title || evt.name}</span>
+                      </div>
+                      <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-amber-500/50" />
+                    </div>
+                  </div>
+                );
+              })}
 
               {/* Left Handle (Cyan Circle with Dark Center) */}
               <div
