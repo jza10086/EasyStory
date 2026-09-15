@@ -44,6 +44,18 @@ export const useStoryStore = create((set, get) => ({
   projectsList: [],
   isProjectsModalOpen: false,
   setIsProjectsModalOpen: (open) => set({ isProjectsModalOpen: open }),
+
+  // Story Copilot (Antigravity AI) States
+  isCopilotOpen: false,
+  setIsCopilotOpen: (open) => set({ isCopilotOpen: open }),
+  copilotInjectedEntities: [],
+  copilotSessions: [],
+  currentCopilotSessionId: null,
+  copilotMessages: [],
+  copilotLoading: false,
+  copilotActiveThinking: '',
+  copilotModel: 'flash',
+  setCopilotModel: (model) => set({ copilotModel: model }),
   
   // Main Workspace: 'nodes' | 'database' | 'map'
   activeWorkspace: 'nodes',
@@ -1073,6 +1085,208 @@ export const useStoryStore = create((set, get) => ({
       }
     } catch (err) {
       console.error('Failed to delete project:', err);
+      return { success: false, error: err.message };
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Story Copilot Actions
+  // -------------------------------------------------------------------------
+  injectEntityToCopilot: (entity) => {
+    const current = get().copilotInjectedEntities || [];
+    if (!current.some((e) => e.id === entity.id)) {
+      set({
+        copilotInjectedEntities: [...current, entity],
+        isCopilotOpen: true
+      });
+    } else {
+      set({ isCopilotOpen: true });
+    }
+  },
+
+  removeInjectedEntity: (id) => {
+    set({
+      copilotInjectedEntities: (get().copilotInjectedEntities || []).filter((e) => e.id !== id)
+    });
+  },
+
+  clearInjectedEntities: () => {
+    set({ copilotInjectedEntities: [] });
+  },
+
+  fetchCopilotSessions: async () => {
+    try {
+      const pid = get().currentProject?.id;
+      const url = pid ? `/api/copilot/sessions?projectId=${pid}` : '/api/copilot/sessions';
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.success) {
+        const active = (data.sessions || []).find((s) => s.id === data.activeSessionId) || data.sessions?.[0] || null;
+        set({
+          copilotSessions: data.sessions || [],
+          currentCopilotSessionId: active ? active.id : null,
+          copilotMessages: active ? (active.messages || []) : []
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch copilot sessions:', err);
+    }
+  },
+
+  createCopilotSession: async (title = '新剧情推演会话') => {
+    try {
+      const pid = get().currentProject?.id;
+      const res = await fetch('/api/copilot/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: pid, title })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await get().fetchCopilotSessions();
+        return data.session;
+      }
+    } catch (err) {
+      console.error('Failed to create copilot session:', err);
+    }
+  },
+
+  switchCopilotSession: async (sessionId) => {
+    try {
+      const pid = get().currentProject?.id;
+      await fetch('/api/copilot/sessions/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: pid, sessionId })
+      });
+      const target = (get().copilotSessions || []).find((s) => s.id === sessionId);
+      set({
+        currentCopilotSessionId: sessionId,
+        copilotMessages: target ? (target.messages || []) : []
+      });
+    } catch (err) {
+      console.error('Failed to switch copilot session:', err);
+    }
+  },
+
+  deleteCopilotSession: async (sessionId) => {
+    try {
+      const pid = get().currentProject?.id;
+      await fetch(`/api/copilot/sessions/${sessionId}?projectId=${pid}`, {
+        method: 'DELETE'
+      });
+      await get().fetchCopilotSessions();
+    } catch (err) {
+      console.error('Failed to delete copilot session:', err);
+    }
+  },
+
+  sendCopilotMessage: async (prompt) => {
+    const {
+      currentCopilotSessionId,
+      copilotInjectedEntities,
+      copilotModel,
+      currentProject
+    } = get();
+
+    if (!prompt || !prompt.trim()) return;
+
+    set({
+      copilotLoading: true,
+      copilotActiveThinking: ''
+    });
+
+    const userTempMsg = {
+      id: `temp-user-${Date.now()}`,
+      role: 'user',
+      content: prompt.trim(),
+      injectedEntities: [...copilotInjectedEntities],
+      timestamp: new Date().toISOString()
+    };
+
+    set({
+      copilotMessages: [...get().copilotMessages, userTempMsg]
+    });
+
+    try {
+      const chatRes = await fetch('/api/copilot/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: currentProject?.id,
+          sessionId: currentCopilotSessionId,
+          prompt: prompt.trim(),
+          model: copilotModel || 'flash',
+          contextEntities: copilotInjectedEntities
+        })
+      });
+      const chatData = await chatRes.json();
+      if (!chatData.success) {
+        throw new Error(chatData.error || '调用 Agent 失败');
+      }
+
+      const activeSessionId = chatData.sessionId;
+      const conversationId = chatData.conversationId;
+
+      // Poll until done
+      let attempts = 0;
+      const maxAttempts = 60; // 60s
+      while (attempts < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 1000));
+        attempts++;
+
+        const pollRes = await fetch(
+          `/api/copilot/poll?projectId=${currentProject?.id}&sessionId=${activeSessionId}&conversationId=${conversationId || ''}`
+        );
+        const pollData = await pollRes.json();
+
+        if (pollData.success) {
+          if (pollData.thinking) {
+            set({ copilotActiveThinking: pollData.thinking });
+          }
+
+          if (pollData.isDone) {
+            set({
+              copilotLoading: false,
+              copilotActiveThinking: ''
+            });
+
+            // Reload project in case tool modified story_graph or database
+            await get().loadProject();
+            await get().fetchCopilotSessions();
+            return { success: true, content: pollData.content, actions: pollData.actions };
+          }
+        }
+      }
+
+      set({ copilotLoading: false });
+    } catch (err) {
+      console.error('Failed to send copilot message:', err);
+      set({
+        copilotLoading: false,
+        copilotActiveThinking: ''
+      });
+      alert(`Copilot 推演失败: ${err.message}`);
+    }
+  },
+
+  executeCopilotToolAction: async (action, params) => {
+    try {
+      const pid = get().currentProject?.id;
+      const res = await fetch('/api/copilot/tools/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: pid, action, params })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await get().loadProject();
+        return { success: true, result: data.result };
+      } else {
+        return { success: false, error: data.error };
+      }
+    } catch (err) {
+      console.error('Failed to execute copilot tool action:', err);
       return { success: false, error: err.message };
     }
   }

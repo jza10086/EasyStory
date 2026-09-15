@@ -14,7 +14,8 @@ import {
   LayoutGrid,
   Maximize2,
   FolderGit2,
-  ChevronDown
+  ChevronDown,
+  Sparkles
 } from 'lucide-react';
 
 export default function Header() {
@@ -28,6 +29,9 @@ export default function Header() {
   const currentProject = useStoryStore((s) => s.currentProject);
   const setIsProjectsModalOpen = useStoryStore((s) => s.setIsProjectsModalOpen);
   const fetchProjectsList = useStoryStore((s) => s.fetchProjectsList);
+
+  const isCopilotOpen = useStoryStore((s) => s.isCopilotOpen);
+  const setIsCopilotOpen = useStoryStore((s) => s.setIsCopilotOpen);
 
   const isLeftSidebarOpen = useStoryStore((s) => s.isLeftSidebarOpen);
   const toggleLeftSidebar = useStoryStore((s) => s.toggleLeftSidebar);
@@ -201,6 +205,20 @@ export default function Header() {
             <div className="h-4 w-px bg-slate-800 mx-1" />
           </>
         )}
+
+        {/* Story Copilot (Antigravity Agent) */}
+        <button
+          onClick={() => setIsCopilotOpen(!isCopilotOpen)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-md transition-all cursor-pointer ${
+            isCopilotOpen
+              ? 'bg-gradient-to-r from-sky-600 to-indigo-600 text-white border border-sky-400/40 shadow-sky-500/25 ring-1 ring-sky-400/40'
+              : 'bg-slate-850 hover:bg-slate-800 text-sky-300 hover:text-white border border-sky-500/30 hover:border-sky-500/60'
+          }`}
+          title="打开 Antigravity 原生剧流副驾驶 (AI 辅助创作)"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-sky-300 animate-pulse" />
+          <span>Story Copilot</span>
+        </button>
 
         {/* AI Settings */}
         <button

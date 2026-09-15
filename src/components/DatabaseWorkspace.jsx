@@ -86,6 +86,7 @@ export default function DatabaseWorkspace() {
   const setSelectedMapLocationId = useStoryStore((s) => s.setSelectedMapLocationId);
   const selectEpoch = useStoryStore((s) => s.selectEpoch);
   const focusTimelineEvent = useStoryStore((s) => s.focusTimelineEvent);
+  const injectEntityToCopilot = useStoryStore((s) => s.injectEntityToCopilot);
 
   const categories = database.categories || [];
   const entries = database.entries || [];
@@ -1428,6 +1429,30 @@ export default function DatabaseWorkspace() {
                               <span>地图定位</span>
                             </button>
                           )}
+
+                          {/* Inject to Copilot Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              injectEntityToCopilot({
+                                id: entry.id,
+                                type: entry.categoryId || activeCategory?.id || 'database_entry',
+                                title: entry.name || entry.title || '未命名条目',
+                                category: entry.categoryId || activeCategory?.name,
+                                description: entry.description || entry.content || entry.summary,
+                                tags: entry.tags || [],
+                                attributes: entry.attributes || [],
+                                time: entry.time,
+                                location: entry.location
+                              });
+                            }}
+                            className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 hover:text-white border border-indigo-500/40 transition-colors shadow-sm ml-1"
+                            title="将此卡片作为上下文注入到 Story Copilot"
+                          >
+                            <Sparkles className="w-3 h-3 text-indigo-400" />
+                            <span>注入 Copilot</span>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1512,6 +1537,28 @@ export default function DatabaseWorkspace() {
                     <span>在地图中定位</span>
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    injectEntityToCopilot({
+                      id: editingEntry.id,
+                      type: editingEntry.categoryId || activeCategory?.id || 'database_entry',
+                      title: editingEntry.name || editingEntry.title || '未命名条目',
+                      category: editingEntry.categoryId || activeCategory?.name,
+                      description: editingEntry.description || editingEntry.content || editingEntry.summary,
+                      tags: editingEntry.tags || [],
+                      attributes: editingEntry.attributes || [],
+                      time: editingEntry.time,
+                      location: editingEntry.location
+                    });
+                  }}
+                  className="flex items-center gap-1.5 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-indigo-500/40 transition-colors shadow-sm cursor-pointer"
+                  title="将此档案卡片作为上下文注入到 Story Copilot"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>注入 Copilot</span>
+                </button>
 
                 <button
                   onClick={handleCloseDrawer}

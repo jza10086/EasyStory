@@ -67,6 +67,7 @@ export default function NodeDrawer() {
   const saveStoryImmediate = useStoryStore((s) => s.saveStoryImmediate);
   const saveStatus = useStoryStore((s) => s.saveStatus);
   const lastSavedTime = useStoryStore((s) => s.lastSavedTime);
+  const injectEntityToCopilot = useStoryStore((s) => s.injectEntityToCopilot);
 
   const [activeTab, setActiveTab] = useState('plot'); // 'plot' | 'choices' | 'ai'
   const [summaryMode, setSummaryMode] = useState('edit'); // 'edit' | 'preview'
@@ -301,6 +302,26 @@ ${existingDialogue || '暂无对白'}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* Inject to Copilot */}
+          <button
+            onClick={() => {
+              injectEntityToCopilot({
+                id: selectedNode.id,
+                type: 'node',
+                code: data.code,
+                title: data.title || '未命名节点',
+                summary: data.summary,
+                content: data.content,
+                characters: data.characters || []
+              });
+            }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 hover:text-white text-xs font-semibold shadow-sm transition-all cursor-pointer"
+            title="将该节点作为上下文注入到 Story Copilot"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            <span>注入 Copilot</span>
+          </button>
+
           {/* Manual Save Button */}
           <button
             onClick={handleManualSave}

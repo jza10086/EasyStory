@@ -11,6 +11,7 @@ import WorldLoreModal from './components/WorldLoreModal';
 import AiSettingsModal from './components/AiSettingsModal';
 import ExportModal from './components/ExportModal';
 import ProjectsModal from './components/ProjectsModal';
+import StoryCopilot from './components/StoryCopilot';
 import { Loader2 } from 'lucide-react';
 
 import { preloadGeoAssets } from './services/geoPreloader';
@@ -67,12 +68,13 @@ export default function App() {
         </main>
       </div>
 
-      {/* Global Modals */}
+      {/* Global Modals & Floating Copilot */}
       <CharactersModal />
       <WorldLoreModal />
       <AiSettingsModal />
       <ExportModal />
       <ProjectsModal />
+      <StoryCopilot />
     </div>
   );
 }

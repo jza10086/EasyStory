@@ -3,6 +3,17 @@ const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
+const {
+  handleCreateBranch,
+  handleUpdateNode,
+  handleAddDatabaseEntry,
+  handleAddMapLocation,
+  handleGetProjectContext
+} = require('./scripts/easystory_mcp.js');
+
+const AGENTAPI_EXE = 'C:\\Users\\81010\\AppData\\Local\\Programs\\antigravity\\resources\\bin\\language_server.exe';
+const GEMINI_BRAIN_DIR = 'C:\\Users\\81010\\.gemini\\antigravity\\brain';
 
 const app = express();
 const PORT = 3001;
@@ -1009,6 +1020,352 @@ app.post('/api/ai/generate', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// 8. Story Copilot (Antigravity Agent Integration)
+// ---------------------------------------------------------------------------
+
+function getCopilotSessionsFile(projectId = null) {
+  const pDir = getProjectDir(projectId);
+  return path.join(pDir, 'copilot_sessions.json');
+}
+
+function getCopilotSessionsData(projectId = null) {
+  const file = getCopilotSessionsFile(projectId);
+  if (!fs.existsSync(file)) {
+    return { activeSessionId: null, sessions: [] };
+  }
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch (err) {
+    return { activeSessionId: null, sessions: [] };
+  }
+}
+
+function saveCopilotSessionsData(data, projectId = null) {
+  const file = getCopilotSessionsFile(projectId);
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+// 8.1 List all sessions for project
+app.get('/api/copilot/sessions', (req, res) => {
+  try {
+    const pid = req.query.projectId || getActiveProjectId();
+    const data = getCopilotSessionsData(pid);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8.2 Create new session
+app.post('/api/copilot/sessions', (req, res) => {
+  try {
+    const pid = req.body.projectId || getActiveProjectId();
+    const title = (req.body.title || '新剧情推演会话').trim();
+    const data = getCopilotSessionsData(pid);
+
+    const now = new Date().toISOString();
+    const newSession = {
+      id: `session-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+      title,
+      conversationId: null,
+      createdAt: now,
+      updatedAt: now,
+      messages: []
+    };
+
+    data.sessions.unshift(newSession);
+    data.activeSessionId = newSession.id;
+    saveCopilotSessionsData(data, pid);
+
+    res.json({ success: true, session: newSession, activeSessionId: newSession.id });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8.3 Switch active session
+app.post('/api/copilot/sessions/switch', (req, res) => {
+  try {
+    const pid = req.body.projectId || getActiveProjectId();
+    const { sessionId } = req.body;
+    const data = getCopilotSessionsData(pid);
+    if (data.sessions.some((s) => s.id === sessionId)) {
+      data.activeSessionId = sessionId;
+      saveCopilotSessionsData(data, pid);
+    }
+    res.json({ success: true, activeSessionId: data.activeSessionId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8.4 Delete session
+app.delete('/api/copilot/sessions/:id', (req, res) => {
+  try {
+    const pid = req.query.projectId || getActiveProjectId();
+    const { id } = req.params;
+    const data = getCopilotSessionsData(pid);
+
+    data.sessions = data.sessions.filter((s) => s.id !== id);
+    if (data.activeSessionId === id) {
+      data.activeSessionId = data.sessions[0]?.id || null;
+    }
+    saveCopilotSessionsData(data, pid);
+
+    res.json({ success: true, activeSessionId: data.activeSessionId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8.5 Send message to Copilot (via Antigravity agentapi)
+app.post('/api/copilot/chat', async (req, res) => {
+  try {
+    const pid = req.body.projectId || getActiveProjectId();
+    let { sessionId, prompt, model, contextEntities } = req.body;
+    if (!prompt || !prompt.trim()) {
+      return res.status(400).json({ success: false, error: '提示词不能为空' });
+    }
+
+    const data = getCopilotSessionsData(pid);
+    let session = data.sessions.find((s) => s.id === sessionId);
+
+    if (!session) {
+      const now = new Date().toISOString();
+      session = {
+        id: `session-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+        title: prompt.trim().substring(0, 20) || '新剧情推演',
+        conversationId: null,
+        createdAt: now,
+        updatedAt: now,
+        messages: []
+      };
+      data.sessions.unshift(session);
+      data.activeSessionId = session.id;
+    }
+
+    // Build context description
+    let contextBlock = '';
+    if (Array.isArray(contextEntities) && contextEntities.length > 0) {
+      contextBlock += '\n【用户注入的当前创作实体上下文】：\n';
+      contextEntities.forEach((entity, idx) => {
+        if (entity.type === 'node') {
+          contextBlock += `\n[注入节点 ${idx + 1}] 编号: ${entity.code || entity.id}, 标题: ${entity.title}\n`;
+          if (entity.summary) contextBlock += `梗概: ${entity.summary}\n`;
+          if (entity.content) contextBlock += `正文: ${entity.content}\n`;
+          if (Array.isArray(entity.characters) && entity.characters.length > 0) {
+            contextBlock += `登场角色ID: ${entity.characters.join(', ')}\n`;
+          }
+        } else if (entity.type === 'character' || entity.type === 'entry') {
+          contextBlock += `\n[注入资料卡片 ${idx + 1}] 名称: ${entity.name || entity.title}, 身份: ${entity.role || '无'}\n`;
+          if (entity.summary || entity.bio) contextBlock += `背景生平: ${entity.summary || entity.bio}\n`;
+          if (entity.initialAffection !== undefined) contextBlock += `当前好感度: ${entity.initialAffection}\n`;
+        } else if (entity.type === 'location') {
+          contextBlock += `\n[注入地图地点 ${idx + 1}] 名称: ${entity.name}, 坐标: (${entity.lat}, ${entity.lng})\n`;
+          if (entity.description) contextBlock += `描述: ${entity.description}\n`;
+        } else if (entity.type === 'event') {
+          contextBlock += `\n[注入历史纪事 ${idx + 1}] 年份: ${entity.year}, 标题: ${entity.title}\n`;
+          if (entity.description) contextBlock += `描述: ${entity.description}\n`;
+        }
+      });
+    }
+
+    const instructionsBlock = `
+你是一位专业的游戏叙事策划与互动小说副驾驶 (Story Copilot)。
+请结合用户提供的上述上下文实体进行深度剧情推演、对白润色或设定设计。
+
+【工程修改指令规则】：
+如果你在推演中需要向故事图谱中创建新分支、修改节点或新增资料库条目，请直接调用 easystory MCP 工具（如 story_create_branch），或在回复末尾附带如下格式的标准动作块，前端会自动将其应用到画布中：
+\`\`\`json:action
+{
+  "action": "story_create_branch",
+  "params": {
+    "parentNodeId": "<父节点ID>",
+    "title": "<分支标题>",
+    "summary": "<剧情梗概与关键走向>",
+    "condition": "<分支触发条件，如 好感度 < 30 或 武力 >= 12>"
+  }
+}
+\`\`\`
+请给出引人入胜的剧情构思与精彩的对白。
+`;
+
+    const fullPrompt = `${contextBlock}\n【用户创作需求】：\n${prompt.trim()}\n${instructionsBlock}`;
+
+    // Append user message
+    const userMsg = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      role: 'user',
+      content: prompt.trim(),
+      injectedEntities: contextEntities || [],
+      timestamp: new Date().toISOString()
+    };
+    session.messages.push(userMsg);
+    session.updatedAt = new Date().toISOString();
+    saveCopilotSessionsData(data, pid);
+
+    // Call agentapi
+    const isNew = !session.conversationId;
+    const args = isNew
+      ? ['agentapi', 'new-conversation', `--model=${model || 'flash'}`, `--title=${session.title}`, fullPrompt]
+      : ['agentapi', 'send-message', session.conversationId, fullPrompt];
+
+    const child = spawn(AGENTAPI_EXE, args, {
+      cwd: path.resolve(__dirname),
+      stdio: 'pipe'
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    child.on('close', (code) => {
+      if (code === 0 && isNew) {
+        try {
+          const resJson = JSON.parse(stdout.trim());
+          const cid = resJson.response?.newConversation?.conversationId;
+          if (cid) {
+            session.conversationId = cid;
+            saveCopilotSessionsData(data, pid);
+          }
+        } catch (e) {
+          console.error('Failed to parse new conversation output:', e, stdout);
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      sessionId: session.id,
+      conversationId: session.conversationId,
+      message: 'Agent 已启动思考推演'
+    });
+  } catch (err) {
+    console.error('Copilot chat error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8.6 Poll conversation response from Antigravity transcript
+app.get('/api/copilot/poll', (req, res) => {
+  try {
+    const pid = req.query.projectId || getActiveProjectId();
+    const { sessionId } = req.query;
+    let { conversationId } = req.query;
+
+    const data = getCopilotSessionsData(pid);
+    const session = data.sessions.find((s) => s.id === sessionId);
+
+    if (!conversationId && session?.conversationId) {
+      conversationId = session.conversationId;
+    }
+
+    if (!conversationId) {
+      return res.json({ success: true, isDone: false, message: '等待会话初始化...' });
+    }
+
+    const logFile = path.join(GEMINI_BRAIN_DIR, conversationId, '.system_generated', 'logs', 'transcript.jsonl');
+    if (!fs.existsSync(logFile)) {
+      return res.json({ success: true, isDone: false, conversationId });
+    }
+
+    const fileContent = fs.readFileSync(logFile, 'utf-8');
+    const lines = fileContent.trim().split('\n').filter(Boolean);
+    const steps = [];
+
+    for (const line of lines) {
+      try {
+        steps.push(JSON.parse(line));
+      } catch {}
+    }
+
+    const plannerSteps = steps.filter((s) => s.type === 'PLANNER_RESPONSE');
+    const latestStep = plannerSteps[plannerSteps.length - 1];
+
+    if (!latestStep) {
+      return res.json({ success: true, isDone: false, conversationId });
+    }
+
+    const isDone = latestStep.status === 'DONE';
+    const content = latestStep.content || '';
+    const thinking = latestStep.thinking || '';
+    const toolCalls = latestStep.tool_calls || [];
+
+    // Detect action blocks in content
+    const actions = [];
+    const actionRegex = /```json:action\s*([\s\S]*?)\s*```/g;
+    let match;
+    while ((match = actionRegex.exec(content)) !== null) {
+      try {
+        const act = JSON.parse(match[1]);
+        if (act && act.action) actions.push(act);
+      } catch {}
+    }
+
+    // If done and message not recorded in session, record it
+    if (isDone && session) {
+      const lastMsg = session.messages[session.messages.length - 1];
+      if (lastMsg && lastMsg.role === 'user') {
+        const assistantMsg = {
+          id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          role: 'assistant',
+          content,
+          thinking,
+          toolCalls,
+          actions,
+          timestamp: new Date().toISOString()
+        };
+        session.messages.push(assistantMsg);
+        session.updatedAt = new Date().toISOString();
+        saveCopilotSessionsData(data, pid);
+      }
+    }
+
+    res.json({
+      success: true,
+      isDone,
+      conversationId,
+      content,
+      thinking,
+      actions,
+      toolCalls
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8.7 Direct tool execution endpoint for Copilot actions
+app.post('/api/copilot/tools/execute', (req, res) => {
+  try {
+    const pid = req.body.projectId || getActiveProjectId();
+    const action = req.body.action || req.body.tool;
+    const params = req.body.params || req.body.args || {};
+    let result = null;
+
+    if (action === 'story_create_branch') {
+      result = handleCreateBranch({ ...params, projectId: pid });
+    } else if (action === 'story_update_node') {
+      result = handleUpdateNode({ ...params, projectId: pid });
+    } else if (action === 'database_add_entry') {
+      result = handleAddDatabaseEntry({ ...params, projectId: pid });
+    } else if (action === 'map_add_location') {
+      result = handleAddMapLocation({ ...params, projectId: pid });
+    } else {
+      return res.status(400).json({ success: false, error: `不支持的动作: ${action}` });
+    }
+
+    touchProjectUpdated(pid);
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error('Copilot tool execute error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`StoryFlow 本地数据服务已在端口 ${PORT} 启动 (http://localhost:${PORT})`);
 });
+
