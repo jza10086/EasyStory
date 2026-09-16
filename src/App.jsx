@@ -20,11 +20,52 @@ export default function App() {
   const loadProject = useStoryStore((s) => s.loadProject);
   const isLoading = useStoryStore((s) => s.isLoading);
   const activeWorkspace = useStoryStore((s) => s.activeWorkspace);
+  const undo = useStoryStore((s) => s.undo);
+  const redo = useStoryStore((s) => s.redo);
 
   useEffect(() => {
     loadProject();
     preloadGeoAssets();
   }, [loadProject]);
+
+  // Global Undo / Redo keyboard shortcuts with input element protection
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const target = e.target;
+      const isInput =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable ||
+          target.getAttribute?.('contenteditable') === 'true');
+
+      // If user is typing inside an input/textarea, do NOT intercept (allow native browser text undo/redo)
+      if (isInput) return;
+
+      const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+      const modifier = isMac ? e.metaKey : e.ctrlKey;
+
+      if (!modifier) return;
+
+      const key = e.key.toLowerCase();
+      // Ctrl+Z / Cmd+Z (or Ctrl+Shift+Z for redo)
+      if (key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      } else if (key === 'y') {
+        // Ctrl+Y / Cmd+Y
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
 
   if (isLoading) {
     return (

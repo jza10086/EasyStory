@@ -68,6 +68,7 @@ export default function NodeDrawer() {
   const saveStatus = useStoryStore((s) => s.saveStatus);
   const lastSavedTime = useStoryStore((s) => s.lastSavedTime);
   const injectEntityToCopilot = useStoryStore((s) => s.injectEntityToCopilot);
+  const pushGraphSnapshot = useStoryStore((s) => s.pushGraphSnapshot);
 
   const [activeTab, setActiveTab] = useState('plot'); // 'plot' | 'choices' | 'ai'
   const [summaryMode, setSummaryMode] = useState('edit'); // 'edit' | 'preview'
@@ -121,6 +122,7 @@ export default function NodeDrawer() {
 
   // Toggle character selection
   const handleToggleCharacter = (charId) => {
+    pushGraphSnapshot();
     const current = data.characters || [];
     const next = current.includes(charId)
       ? current.filter((id) => id !== charId)
@@ -131,6 +133,7 @@ export default function NodeDrawer() {
   // Convert legacy markdown content into dialogue list beats
   const handleConvertLegacyContent = () => {
     if (!data.content) return;
+    pushGraphSnapshot();
     const lines = data.content.split('\n').map((l) => l.trim()).filter(Boolean);
     const beats = [];
     lines.forEach((line, i) => {
@@ -343,9 +346,7 @@ ${existingDialogue || '暂无对白'}
 
           <button
             onClick={() => {
-              if (confirm(`确定要删除节点 [${data.code}] ${data.title} 吗？与之关联的连线也将被移除。`)) {
-                deleteNode(selectedNodeId);
-              }
+              deleteNode(selectedNodeId);
             }}
             className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors ml-1"
             title="删除节点"
@@ -637,7 +638,10 @@ ${existingDialogue || '暂无对白'}
 
               <DialogueStreamEditor
                 dialogueList={data.dialogueList || []}
-                onChange={(newList) => handleChange('dialogueList', newList)}
+                onChange={(newList) => {
+                  pushGraphSnapshot();
+                  handleChange('dialogueList', newList);
+                }}
                 characters={characters}
                 nodeCharacters={data.characters || []}
               />

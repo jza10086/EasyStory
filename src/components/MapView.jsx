@@ -1977,14 +1977,12 @@ export default function MapView({ isActive = true }) {
   const handleDeleteLocation = useCallback(
     async (loc) => {
       if (!loc) return;
-      if (confirm(`确定要删除地点“${loc.name || loc.title}”吗？`)) {
-        const targetEpochId = loc.epochId || currentEpochRef.current?.id || 'epoch-pre-ww3';
-        await deleteEpochLocation(targetEpochId, loc.id);
-        setActiveLocationCard(null);
-        setSelectedMapLocationId(null);
-        if (movingLocationRef.current?.id === loc.id) {
-          setMovingLocation(null);
-        }
+      const targetEpochId = loc.epochId || currentEpochRef.current?.id || 'epoch-pre-ww3';
+      await deleteEpochLocation(targetEpochId, loc.id);
+      setActiveLocationCard(null);
+      setSelectedMapLocationId(null);
+      if (movingLocationRef.current?.id === loc.id) {
+        setMovingLocation(null);
       }
     },
     [deleteEpochLocation, setSelectedMapLocationId]
@@ -2038,11 +2036,9 @@ export default function MapView({ isActive = true }) {
   const handleDeleteEvent = useCallback(
     async (evt) => {
       if (!evt) return;
-      if (confirm(`确定要删除历史事件“${evt.title || evt.name}”吗？`)) {
-        await deleteTimelineEvent(evt.id);
-        setActiveEventCard(null);
-        setSelectedTimelineEventId(null);
-      }
+      await deleteTimelineEvent(evt.id);
+      setActiveEventCard(null);
+      setSelectedTimelineEventId(null);
     },
     [deleteTimelineEvent, setSelectedTimelineEventId]
   );

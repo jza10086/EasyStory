@@ -15,7 +15,9 @@ import {
   Maximize2,
   FolderGit2,
   ChevronDown,
-  Sparkles
+  Sparkles,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 
 export default function Header() {
@@ -38,6 +40,29 @@ export default function Header() {
   const activeWorkspace = useStoryStore((s) => s.activeWorkspace);
   const setActiveWorkspace = useStoryStore((s) => s.setActiveWorkspace);
   const canvasActions = useStoryStore((s) => s.canvasActions);
+
+  const undo = useStoryStore((s) => s.undo);
+  const redo = useStoryStore((s) => s.redo);
+  const historyGraphPast = useStoryStore((s) => s.historyGraphPast);
+  const historyGraphFuture = useStoryStore((s) => s.historyGraphFuture);
+  const historyDatabasePast = useStoryStore((s) => s.historyDatabasePast);
+  const historyDatabaseFuture = useStoryStore((s) => s.historyDatabaseFuture);
+  const historyMapPast = useStoryStore((s) => s.historyMapPast);
+  const historyMapFuture = useStoryStore((s) => s.historyMapFuture);
+
+  const canUndo =
+    activeWorkspace === 'nodes'
+      ? historyGraphPast.length > 0
+      : activeWorkspace === 'database'
+      ? historyDatabasePast.length > 0
+      : historyMapPast.length > 0;
+
+  const canRedo =
+    activeWorkspace === 'nodes'
+      ? historyGraphFuture.length > 0
+      : activeWorkspace === 'database'
+      ? historyDatabaseFuture.length > 0
+      : historyMapFuture.length > 0;
 
   useEffect(() => {
     fetchProjectsList();
@@ -134,6 +159,34 @@ export default function Header() {
             }`}
           >
             世界地图与时间轴
+          </button>
+        </div>
+
+        {/* Global Undo / Redo Buttons */}
+        <div className="flex items-center gap-0.5 bg-slate-950/80 p-0.5 rounded-lg border border-slate-800">
+          <button
+            onClick={() => undo()}
+            disabled={!canUndo}
+            className={`p-1.5 rounded-md transition-colors ${
+              canUndo
+                ? 'text-slate-200 hover:text-white hover:bg-slate-800 cursor-pointer'
+                : 'text-slate-600 cursor-not-allowed opacity-40'
+            }`}
+            title="撤销 (Ctrl+Z)"
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => redo()}
+            disabled={!canRedo}
+            className={`p-1.5 rounded-md transition-colors ${
+              canRedo
+                ? 'text-slate-200 hover:text-white hover:bg-slate-800 cursor-pointer'
+                : 'text-slate-600 cursor-not-allowed opacity-40'
+            }`}
+            title="重做 (Ctrl+Y / Ctrl+Shift+Z)"
+          >
+            <Redo2 className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

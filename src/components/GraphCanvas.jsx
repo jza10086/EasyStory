@@ -21,7 +21,9 @@ import {
   GitFork,
   Copy,
   Trash2,
-  Sparkles
+  Sparkles,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 
 const nodeTypes = {
@@ -231,12 +233,47 @@ function FlowCanvas() {
   const injectEntityToCopilot = useStoryStore((s) => s.injectEntityToCopilot);
   const registerCanvasAction = useStoryStore((s) => s.registerCanvasAction);
 
+  const pushGraphSnapshot = useStoryStore((s) => s.pushGraphSnapshot);
+  const undoGraph = useStoryStore((s) => s.undoGraph);
+  const redoGraph = useStoryStore((s) => s.redoGraph);
+  const historyGraphPast = useStoryStore((s) => s.historyGraphPast);
+  const historyGraphFuture = useStoryStore((s) => s.historyGraphFuture);
+
   const { fitView, zoomIn, zoomOut, screenToFlowPosition } = useReactFlow();
 
   const [contextMenu, setContextMenu] = useState(null);
 
+  // Track drag start to record snapshot for undoing node movements
+  const dragStartRef = useRef(null);
+
+  const onNodeDragStart = useCallback((event, node) => {
+    dragStartRef.current = {
+      id: node.id,
+      x: node.position.x,
+      y: node.position.y,
+      snapshot: {
+        nodes: JSON.parse(JSON.stringify(nodes)),
+        edges: JSON.parse(JSON.stringify(edges)),
+        selectedNodeId: useStoryStore.getState().selectedNodeId
+      }
+    };
+  }, [nodes, edges]);
+
+  const onNodeDragStop = useCallback((event, node) => {
+    if (dragStartRef.current && dragStartRef.current.snapshot) {
+      const start = dragStartRef.current;
+      const dx = Math.abs(node.position.x - start.x);
+      const dy = Math.abs(node.position.y - start.y);
+      if (dx > 2 || dy > 2) {
+        pushGraphSnapshot(start.snapshot);
+      }
+      dragStartRef.current = null;
+    }
+  }, [pushGraphSnapshot]);
+
   // One-click Auto Layout
   const handleAutoLayout = useCallback(() => {
+    pushGraphSnapshot();
     // Simple hierarchical positioning based on in-degrees / node codes
     const levels = {};
     const visited = new Set();
@@ -293,7 +330,7 @@ function FlowCanvas() {
       onNodesChange(updatedChanges);
       setTimeout(() => fitView({ duration: 400 }), 50);
     }
-  }, [nodes, edges, onNodesChange, fitView]);
+  }, [nodes, edges, onNodesChange, fitView, pushGraphSnapshot]);
 
   useEffect(() => {
     registerCanvasAction('fitView', () => fitView({ duration: 400 }));
@@ -328,11 +365,8 @@ function FlowCanvas() {
     setContextMenu(null);
   }, [setSelectedNodeId]);
 
-  const handleDeleteNode = useCallback((nodeId, title) => {
-    const nodeTitle = title || '该节点';
-    if (confirm(`确定要删除情节节点「${nodeTitle}」及其相连的所有分支连线吗？`)) {
-      deleteNode(nodeId);
-    }
+  const handleDeleteNode = useCallback((nodeId) => {
+    deleteNode(nodeId);
   }, [deleteNode]);
 
   const handleInjectCopilot = useCallback((node) => {
@@ -355,6 +389,8 @@ function FlowCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeContextMenu={onNodeContextMenu}
@@ -386,6 +422,34 @@ function FlowCanvas() {
 
         {/* Floating Canvas Controls */}
         <Panel position="bottom-left" className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/80 p-1.5 rounded-xl shadow-xl backdrop-blur">
+          {/* Undo / Redo */}
+          <button
+            onClick={() => undoGraph()}
+            disabled={historyGraphPast.length === 0}
+            className={`p-1.5 rounded-lg transition-colors ${
+              historyGraphPast.length > 0
+                ? 'text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer'
+                : 'text-slate-600 cursor-not-allowed opacity-40'
+            }`}
+            title="撤销 (Ctrl+Z)"
+          >
+            <Undo2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => redoGraph()}
+            disabled={historyGraphFuture.length === 0}
+            className={`p-1.5 rounded-lg transition-colors ${
+              historyGraphFuture.length > 0
+                ? 'text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer'
+                : 'text-slate-600 cursor-not-allowed opacity-40'
+            }`}
+            title="重做 (Ctrl+Y / Ctrl+Shift+Z)"
+          >
+            <Redo2 className="w-4 h-4" />
+          </button>
+
+          <div className="w-px h-4 bg-slate-700 mx-0.5" />
+
           <button
             onClick={() => zoomIn()}
             className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"

@@ -1114,12 +1114,10 @@ export default function DatabaseWorkspace() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (confirm(`确定要删除“${entry.title || entry.name}”卡片吗？`)) {
-                                  if (activeCategory.id === 'locations' || entry.categoryId === 'locations') {
-                                    deleteEpochLocation(entry.epochId || selectedEpochFolderId, entry.id);
-                                  } else {
-                                    deleteDatabaseEntry(entry.id);
-                                  }
+                                if (activeCategory.id === 'locations' || entry.categoryId === 'locations') {
+                                  deleteEpochLocation(entry.epochId || selectedEpochFolderId, entry.id);
+                                } else {
+                                  deleteDatabaseEntry(entry.id);
                                 }
                               }}
                               className="p-1.5 bg-slate-900/90 hover:bg-rose-600 text-slate-300 hover:text-white rounded-lg backdrop-blur-sm transition-colors shadow"
@@ -1240,12 +1238,10 @@ export default function DatabaseWorkspace() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (confirm(`确定要删除“${entry.title || entry.name}”卡片吗？`)) {
-                                  if (activeCategory.id === 'locations' || entry.categoryId === 'locations') {
-                                    deleteEpochLocation(entry.epochId || selectedEpochFolderId, entry.id);
-                                  } else {
-                                    deleteDatabaseEntry(entry.id);
-                                  }
+                                if (activeCategory.id === 'locations' || entry.categoryId === 'locations') {
+                                  deleteEpochLocation(entry.epochId || selectedEpochFolderId, entry.id);
+                                } else {
+                                  deleteDatabaseEntry(entry.id);
                                 }
                               }}
                               className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-700/80 rounded-lg transition-colors"

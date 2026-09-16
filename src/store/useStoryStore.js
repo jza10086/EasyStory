@@ -98,6 +98,238 @@ export const useStoryStore = create((set, get) => ({
     autoLayout: null
   },
 
+  // History stacks for Undo / Redo (max 30 steps per workspace)
+  historyGraphPast: [],
+  historyGraphFuture: [],
+  historyDatabasePast: [],
+  historyDatabaseFuture: [],
+  historyMapPast: [],
+  historyMapFuture: [],
+
+  // Push snapshot helpers
+  pushGraphSnapshot: (explicitSnapshot = null) => {
+    const snapshot = explicitSnapshot || {
+      nodes: JSON.parse(JSON.stringify(get().nodes)),
+      edges: JSON.parse(JSON.stringify(get().edges)),
+      selectedNodeId: get().selectedNodeId
+    };
+    set((s) => ({
+      historyGraphPast: [...s.historyGraphPast, snapshot].slice(-30),
+      historyGraphFuture: []
+    }));
+  },
+
+  pushDatabaseSnapshot: (explicitSnapshot = null) => {
+    const snapshot = explicitSnapshot || {
+      database: JSON.parse(JSON.stringify(get().database)),
+      characters: JSON.parse(JSON.stringify(get().characters)),
+      mapTimeline: JSON.parse(JSON.stringify(get().mapData?.timeline || []))
+    };
+    set((s) => ({
+      historyDatabasePast: [...s.historyDatabasePast, snapshot].slice(-30),
+      historyDatabaseFuture: []
+    }));
+  },
+
+  pushMapSnapshot: (explicitSnapshot = null) => {
+    const snapshot = explicitSnapshot || {
+      mapData: JSON.parse(JSON.stringify(get().mapData)),
+      databaseEntries: JSON.parse(JSON.stringify(get().database?.entries || []))
+    };
+    set((s) => ({
+      historyMapPast: [...s.historyMapPast, snapshot].slice(-30),
+      historyMapFuture: []
+    }));
+  },
+
+  // Undo / Redo for Graph Canvas
+  undoGraph: () => {
+    const { historyGraphPast, historyGraphFuture, nodes, edges, selectedNodeId } = get();
+    if (historyGraphPast.length === 0) return;
+    const previous = historyGraphPast[historyGraphPast.length - 1];
+    const nextPast = historyGraphPast.slice(0, -1);
+    const currentSnapshot = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+      selectedNodeId
+    };
+    set({
+      nodes: previous.nodes,
+      edges: previous.edges,
+      selectedNodeId: previous.selectedNodeId,
+      historyGraphPast: nextPast,
+      historyGraphFuture: [currentSnapshot, ...historyGraphFuture].slice(0, 30)
+    });
+    get().triggerAutoSave();
+  },
+
+  redoGraph: () => {
+    const { historyGraphPast, historyGraphFuture, nodes, edges, selectedNodeId } = get();
+    if (historyGraphFuture.length === 0) return;
+    const next = historyGraphFuture[0];
+    const nextFuture = historyGraphFuture.slice(1);
+    const currentSnapshot = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+      selectedNodeId
+    };
+    set({
+      nodes: next.nodes,
+      edges: next.edges,
+      selectedNodeId: next.selectedNodeId,
+      historyGraphPast: [...historyGraphPast, currentSnapshot].slice(-30),
+      historyGraphFuture: nextFuture
+    });
+    get().triggerAutoSave();
+  },
+
+  // Undo / Redo for Database
+  undoDatabase: async () => {
+    const { historyDatabasePast, historyDatabaseFuture, database, characters, mapData } = get();
+    if (historyDatabasePast.length === 0) return;
+    const previous = historyDatabasePast[historyDatabasePast.length - 1];
+    const nextPast = historyDatabasePast.slice(0, -1);
+    const currentSnapshot = {
+      database: JSON.parse(JSON.stringify(database)),
+      characters: JSON.parse(JSON.stringify(characters)),
+      mapTimeline: JSON.parse(JSON.stringify(mapData?.timeline || []))
+    };
+
+    set({
+      database: previous.database,
+      characters: previous.characters,
+      historyDatabasePast: nextPast,
+      historyDatabaseFuture: [currentSnapshot, ...historyDatabaseFuture].slice(0, 30)
+    });
+
+    if (previous.mapTimeline) {
+      set((s) => ({
+        mapData: { ...s.mapData, timeline: previous.mapTimeline }
+      }));
+      await get().saveMapData({ ...get().mapData, timeline: previous.mapTimeline });
+    }
+
+    await get().saveDatabase(previous.database);
+  },
+
+  redoDatabase: async () => {
+    const { historyDatabasePast, historyDatabaseFuture, database, characters, mapData } = get();
+    if (historyDatabaseFuture.length === 0) return;
+    const next = historyDatabaseFuture[0];
+    const nextFuture = historyDatabaseFuture.slice(1);
+    const currentSnapshot = {
+      database: JSON.parse(JSON.stringify(database)),
+      characters: JSON.parse(JSON.stringify(characters)),
+      mapTimeline: JSON.parse(JSON.stringify(mapData?.timeline || []))
+    };
+
+    set({
+      database: next.database,
+      characters: next.characters,
+      historyDatabasePast: [...historyDatabasePast, currentSnapshot].slice(-30),
+      historyDatabaseFuture: nextFuture
+    });
+
+    if (next.mapTimeline) {
+      set((s) => ({
+        mapData: { ...s.mapData, timeline: next.mapTimeline }
+      }));
+      await get().saveMapData({ ...get().mapData, timeline: next.mapTimeline });
+    }
+
+    await get().saveDatabase(next.database);
+  },
+
+  // Undo / Redo for Map
+  undoMap: async () => {
+    const { historyMapPast, historyMapFuture, mapData, database } = get();
+    if (historyMapPast.length === 0) return;
+    const previous = historyMapPast[historyMapPast.length - 1];
+    const nextPast = historyMapPast.slice(0, -1);
+    const currentSnapshot = {
+      mapData: JSON.parse(JSON.stringify(mapData)),
+      databaseEntries: JSON.parse(JSON.stringify(database?.entries || []))
+    };
+
+    set({
+      mapData: previous.mapData,
+      historyMapPast: nextPast,
+      historyMapFuture: [currentSnapshot, ...historyMapFuture].slice(0, 30)
+    });
+
+    if (previous.databaseEntries) {
+      const updatedDb = { ...get().database, entries: previous.databaseEntries };
+      set({ database: updatedDb });
+      await get().saveDatabase(updatedDb);
+    }
+
+    await get().saveMapData(previous.mapData);
+  },
+
+  redoMap: async () => {
+    const { historyMapPast, historyMapFuture, mapData, database } = get();
+    if (historyMapFuture.length === 0) return;
+    const next = historyMapFuture[0];
+    const nextFuture = historyMapFuture.slice(1);
+    const currentSnapshot = {
+      mapData: JSON.parse(JSON.stringify(mapData)),
+      databaseEntries: JSON.parse(JSON.stringify(database?.entries || []))
+    };
+
+    set({
+      mapData: next.mapData,
+      historyMapPast: [...historyMapPast, currentSnapshot].slice(-30),
+      historyMapFuture: nextFuture
+    });
+
+    if (next.databaseEntries) {
+      const updatedDb = { ...get().database, entries: next.databaseEntries };
+      set({ database: updatedDb });
+      await get().saveDatabase(updatedDb);
+    }
+
+    await get().saveMapData(next.mapData);
+  },
+
+  // Global Undo / Redo dispatchers based on activeWorkspace
+  undo: async () => {
+    const { activeWorkspace } = get();
+    if (activeWorkspace === 'nodes') {
+      get().undoGraph();
+    } else if (activeWorkspace === 'database') {
+      await get().undoDatabase();
+    } else if (activeWorkspace === 'map') {
+      await get().undoMap();
+    }
+  },
+
+  redo: async () => {
+    const { activeWorkspace } = get();
+    if (activeWorkspace === 'nodes') {
+      get().redoGraph();
+    } else if (activeWorkspace === 'database') {
+      await get().redoDatabase();
+    } else if (activeWorkspace === 'map') {
+      await get().redoMap();
+    }
+  },
+
+  canUndo: () => {
+    const { activeWorkspace, historyGraphPast, historyDatabasePast, historyMapPast } = get();
+    if (activeWorkspace === 'nodes') return historyGraphPast.length > 0;
+    if (activeWorkspace === 'database') return historyDatabasePast.length > 0;
+    if (activeWorkspace === 'map') return historyMapPast.length > 0;
+    return false;
+  },
+
+  canRedo: () => {
+    const { activeWorkspace, historyGraphFuture, historyDatabaseFuture, historyMapFuture } = get();
+    if (activeWorkspace === 'nodes') return historyGraphFuture.length > 0;
+    if (activeWorkspace === 'database') return historyDatabaseFuture.length > 0;
+    if (activeWorkspace === 'map') return historyMapFuture.length > 0;
+    return false;
+  },
+
   selectedNodeId: null,
   activeModal: null, // 'characters' | 'world' | 'settings' | 'export' | null
   
@@ -114,7 +346,13 @@ export const useStoryStore = create((set, get) => ({
         selectedNodeId: null,
         selectedMapLocationId: null,
         selectedTimelineEventId: null,
-        selectedDatabaseTag: null
+        selectedDatabaseTag: null,
+        historyGraphPast: [],
+        historyGraphFuture: [],
+        historyDatabasePast: [],
+        historyDatabaseFuture: [],
+        historyMapPast: [],
+        historyMapFuture: []
       });
 
       const targetPid = projectId || localStorage.getItem('lastOpenedProjectId') || '';
@@ -259,6 +497,7 @@ export const useStoryStore = create((set, get) => ({
 
   // On edge connect
   onConnect: (connection) => {
+    get().pushGraphSnapshot();
     const edgeId = `e-${connection.source}-${connection.target}-${Date.now().toString(36)}`;
     const newEdge = {
       ...connection,
@@ -274,6 +513,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Add a new node (optionally child of parent, and optionally at custom position)
   addNode: (parentNodeId = null, customPosition = null) => {
+    get().pushGraphSnapshot();
     const nodes = get().nodes;
     let newPosition = customPosition || { x: 250, y: 200 };
     let newCode = `${nodes.length + 1}`;
@@ -357,6 +597,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Clone/duplicate node
   cloneNode: (nodeId) => {
+    get().pushGraphSnapshot();
     const node = get().nodes.find((n) => n.id === nodeId);
     if (!node) return null;
     const newNodeId = `node-${Date.now().toString(36)}`;
@@ -383,7 +624,10 @@ export const useStoryStore = create((set, get) => ({
   },
 
   // Update node data
-  updateNodeData: (nodeId, dataUpdate) => {
+  updateNodeData: (nodeId, dataUpdate, recordSnapshot = false) => {
+    if (recordSnapshot) {
+      get().pushGraphSnapshot();
+    }
     const nodes = get().nodes.map((n) => {
       if (n.id === nodeId) {
         return {
@@ -399,6 +643,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Delete node and its edges
   deleteNode: (nodeId) => {
+    get().pushGraphSnapshot();
     const nodes = get().nodes.filter((n) => n.id !== nodeId);
     const edges = get().edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
     const selectedNodeId = get().selectedNodeId === nodeId ? null : get().selectedNodeId;
@@ -408,6 +653,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Update edge condition label
   updateEdgeCondition: (edgeId, condition) => {
+    get().pushGraphSnapshot();
     const edges = get().edges.map((e) => {
       if (e.id === edgeId) {
         return {
@@ -423,6 +669,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Delete edge
   deleteEdge: (edgeId) => {
+    get().pushGraphSnapshot();
     const edges = get().edges.filter((e) => e.id !== edgeId);
     set({ edges });
     get().triggerAutoSave();
@@ -515,6 +762,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Save or update an entry in the database
   saveDatabaseEntry: async (entry) => {
+    get().pushDatabaseSnapshot();
     const db = get().database || { categories: [], entries: [] };
     const entries = [...(db.entries || [])];
     const entryId = entry.id || `entry-${Date.now().toString(36)}`;
@@ -585,6 +833,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Delete an entry from the database
   deleteDatabaseEntry: async (entryId) => {
+    get().pushDatabaseSnapshot();
     const db = get().database || { categories: [], entries: [] };
     const entries = (db.entries || []).filter((e) => e.id !== entryId);
     const updatedDb = { ...db, entries };
@@ -603,6 +852,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Save or update a category in the database
   saveDatabaseCategory: async (category) => {
+    get().pushDatabaseSnapshot();
     const db = get().database || { categories: [], entries: [] };
     const categories = [...(db.categories || [])];
     const catId = category.id || `cat-${Date.now().toString(36)}`;
@@ -629,6 +879,7 @@ export const useStoryStore = create((set, get) => ({
 
   // Delete a category and its entries
   deleteDatabaseCategory: async (categoryId) => {
+    get().pushDatabaseSnapshot();
     const db = get().database || { categories: [], entries: [] };
     const categories = (db.categories || []).filter((c) => c.id !== categoryId);
     const entries = (db.entries || []).filter((e) => e.categoryId !== categoryId);
@@ -712,6 +963,7 @@ export const useStoryStore = create((set, get) => ({
   },
 
   setRegionColor: async (epochId, regionKey, color) => {
+    get().pushMapSnapshot();
     const current = get().mapData || {};
     const epochs = (current.epochs || []).map((ep) => {
       if (ep.id === epochId) {
@@ -740,6 +992,7 @@ export const useStoryStore = create((set, get) => ({
   },
 
   setPlateInfo: async (epochId, plateId, { name, color, description, applyAllEpochs = false }) => {
+    get().pushMapSnapshot();
     const current = get().mapData || {};
     const epochs = (current.epochs || []).map((ep) => {
       if (ep.id === epochId || applyAllEpochs) {
@@ -770,6 +1023,7 @@ export const useStoryStore = create((set, get) => ({
   },
 
   saveEpochLocation: async (epochId, locationData) => {
+    get().pushMapSnapshot();
     const current = get().mapData || {};
     const epochs = [...(current.epochs || [])];
     const targetEpochId = epochId || current.currentEpochId || epochs[0]?.id || 'epoch-pre-ww3';
@@ -824,6 +1078,7 @@ export const useStoryStore = create((set, get) => ({
   },
 
   deleteEpochLocation: async (epochId, locationId) => {
+    get().pushMapSnapshot();
     const current = get().mapData || {};
     const epochs = [...(current.epochs || [])];
     const targetEpochId = epochId || current.currentEpochId;
@@ -874,6 +1129,7 @@ export const useStoryStore = create((set, get) => ({
   },
 
   addTimelineEvent: async (event) => {
+    get().pushMapSnapshot();
     const current = get().mapData || {};
     const timeline = [...(current.timeline || [])];
     const eventId = event.id || `evt-${Date.now().toString(36)}`;
@@ -926,6 +1182,7 @@ export const useStoryStore = create((set, get) => ({
   },
 
   updateTimelineEvent: async (id, patch) => {
+    get().pushMapSnapshot();
     const current = get().mapData || {};
     let updatedEvt = null;
     const timeline = (current.timeline || []).map((evt) => {
@@ -947,6 +1204,7 @@ export const useStoryStore = create((set, get) => ({
   },
 
   deleteTimelineEvent: async (id) => {
+    get().pushMapSnapshot();
     const current = get().mapData || {};
     const timeline = (current.timeline || []).filter((evt) => evt.id !== id);
     if (get().selectedTimelineEventId === id) {
