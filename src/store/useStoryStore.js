@@ -272,10 +272,10 @@ export const useStoryStore = create((set, get) => ({
     get().triggerAutoSave();
   },
 
-  // Add a new node
-  addNode: (parentNodeId = null) => {
+  // Add a new node (optionally child of parent, and optionally at custom position)
+  addNode: (parentNodeId = null, customPosition = null) => {
     const nodes = get().nodes;
-    let newPosition = { x: 250, y: 200 };
+    let newPosition = customPosition || { x: 250, y: 200 };
     let newCode = `${nodes.length + 1}`;
 
     if (parentNodeId) {
@@ -285,10 +285,12 @@ export const useStoryStore = create((set, get) => ({
         const existingEdges = get().edges.filter((e) => e.source === parentNodeId);
         const childCount = existingEdges.length + 1;
         newCode = `${parent.data.code}.${childCount}`;
-        newPosition = {
-          x: parent.position.x + 480,
-          y: parent.position.y + (childCount - 1) * 160 - 40
-        };
+        if (!customPosition) {
+          newPosition = {
+            x: parent.position.x + 480,
+            y: parent.position.y + (childCount - 1) * 160 - 40
+          };
+        }
       }
     }
 
@@ -349,6 +351,33 @@ export const useStoryStore = create((set, get) => ({
       selectedNodeId: newNodeId
     });
 
+    get().triggerAutoSave();
+    return newNodeId;
+  },
+
+  // Clone/duplicate node
+  cloneNode: (nodeId) => {
+    const node = get().nodes.find((n) => n.id === nodeId);
+    if (!node) return null;
+    const newNodeId = `node-${Date.now().toString(36)}`;
+    const newNode = {
+      ...node,
+      id: newNodeId,
+      position: {
+        x: node.position.x + 60,
+        y: node.position.y + 60
+      },
+      data: {
+        ...node.data,
+        code: `${node.data.code || '1'}.copy`,
+        title: `${node.data.title || '未命名节点'} (副本)`,
+        choices: []
+      }
+    };
+    set({
+      nodes: [...get().nodes, newNode],
+      selectedNodeId: newNodeId
+    });
     get().triggerAutoSave();
     return newNodeId;
   },

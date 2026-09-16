@@ -118,7 +118,7 @@ function StoryNodeComponent({ id, data, selected }) {
 
       {/* Hover Quick Action: Add Child Branch */}
       <div className="px-4 pb-3 pt-0 flex justify-between items-center text-[11px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">
-        <span className="text-[10px] text-slate-500">点击查看/编辑详情</span>
+        <span className="text-[10px] text-slate-500">左键详情 · 右键菜单</span>
         <button
           onClick={(e) => {
             e.stopPropagation();
