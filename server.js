@@ -1205,10 +1205,20 @@ app.post('/api/copilot/chat', async (req, res) => {
     session.updatedAt = new Date().toISOString();
     saveCopilotSessionsData(data, pid);
 
+    if (model) {
+      session.model = model;
+    }
+
     // Call agentapi
     const isNew = !session.conversationId;
+    let modelArg = [];
+    if (isNew) {
+      if (model && model !== 'inherit' && model !== 'default') {
+        modelArg = [`--model=${model}`];
+      }
+    }
     const args = isNew
-      ? ['agentapi', 'new-conversation', `--model=${model || 'flash'}`, `--title=${session.title}`, fullPrompt]
+      ? ['agentapi', 'new-conversation', ...modelArg, `--title=${session.title}`, fullPrompt]
       : ['agentapi', 'send-message', session.conversationId, fullPrompt];
 
     const child = spawn(AGENTAPI_EXE, args, {
@@ -1315,6 +1325,7 @@ app.get('/api/copilot/poll', (req, res) => {
           thinking,
           toolCalls,
           actions,
+          model: session.model || 'flash',
           timestamp: new Date().toISOString()
         };
         session.messages.push(assistantMsg);
@@ -1363,6 +1374,42 @@ app.post('/api/copilot/tools/execute', (req, res) => {
     console.error('Copilot tool execute error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// 8.8 List available Antigravity models
+app.get('/api/copilot/models', (req, res) => {
+  const models = [
+    {
+      id: 'flash',
+      name: 'Gemini 3.8 Flash (High)',
+      shortName: 'Gemini 3.8 Flash',
+      tag: '极速推演 · 推荐',
+      description: 'Google 原生主力极速模型 · 响应极其迅速，长文本理解优秀，适合日常主线剧情推演与即兴创作。',
+      isDefault: true
+    },
+    {
+      id: 'pro',
+      name: 'Gemini 3.8 Pro',
+      shortName: 'Gemini 3.8 Pro',
+      tag: '深度思考 · 强逻辑',
+      description: 'Google 原生旗舰深度思考模型 · 具备强劲思维链，适合复杂分支架构、长线伏笔与严密设定推演。'
+    },
+    {
+      id: 'flash_lite',
+      name: 'Gemini 3.8 Flash-Lite',
+      shortName: 'Gemini 3.8 Flash-Lite',
+      tag: '超低延迟 · 极速',
+      description: 'Google 原生轻量模型 · 极低响应延迟，适合快速对白润色、局部修辞润色与语法打磨。'
+    },
+    {
+      id: 'inherit',
+      name: '跟随 Antigravity 全局配置',
+      shortName: '系统默认 (Inherit)',
+      tag: '跟随主程序',
+      description: '自动同步您当前在 Antigravity 客户端设置中所选的全局活跃模型（当前为 Gemini 3.8 Flash (High)）。'
+    }
+  ];
+  res.json({ success: true, models });
 });
 
 app.listen(PORT, () => {

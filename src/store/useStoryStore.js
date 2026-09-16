@@ -54,8 +54,13 @@ export const useStoryStore = create((set, get) => ({
   copilotMessages: [],
   copilotLoading: false,
   copilotActiveThinking: '',
-  copilotModel: 'flash',
-  setCopilotModel: (model) => set({ copilotModel: model }),
+  copilotModel: typeof window !== 'undefined' ? localStorage.getItem('story_copilot_model') || 'flash' : 'flash',
+  setCopilotModel: (model) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('story_copilot_model', model);
+    }
+    set({ copilotModel: model });
+  },
   
   // Main Workspace: 'nodes' | 'database' | 'map'
   activeWorkspace: 'nodes',

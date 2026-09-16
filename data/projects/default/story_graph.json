@@ -65,86 +65,19 @@
             "condition": "洞察 >= 14 / 潜行模式"
           }
         ]
-      }
-    },
-    {
-      "id": "node-1-1",
-      "type": "storyNode",
-      "position": {
-        "x": 620,
-        "y": 60
       },
-      "data": {
-        "code": "1.1",
-        "title": "并肩脱险",
-        "summary": "主角抱起少女冲出崩塌通道。少女苏醒，得知主角身份后放下防备，赠予护身符。",
-        "characters": [
-          "char-alice"
-        ],
-        "characterStatuses": {
-          "char-alice": "脱险苏醒，脸颊微红，对主角产生信任"
-        },
-        "dialogueList": [
-          {
-            "id": "beat-11-1",
-            "speakerId": "narrator",
-            "speakerState": "狂奔冲刺 / 巨石塌陷",
-            "text": "主角抱起冰冷的少女，甩出烟雾弹狂奔冲向侧翼通道。巨石在身后轰鸣塌陷，彻底阻断了怪物的追击。"
-          },
-          {
-            "id": "beat-11-2",
-            "speakerId": "char-alice",
-            "speakerState": "缓缓睁开淡紫眼眸，脸颊微红",
-            "text": "谢谢你……我还以为自己再也见不到阳光了。"
-          }
-        ],
-        "endingType": "none",
-        "image": "",
-        "choices": []
-      }
-    },
-    {
-      "id": "node-1-2",
-      "type": "storyNode",
-      "position": {
-        "x": 620,
-        "y": 220
+      "measured": {
+        "width": 320,
+        "height": 186
       },
-      "data": {
-        "code": "1.2",
-        "title": "险胜魔物",
-        "summary": "主角拔刀斩杀魔物，展现惊人战力。少女惊醒，对主角力量感到震撼并略带戒备。",
-        "characters": [
-          "char-alice"
-        ],
-        "characterStatuses": {
-          "char-alice": "惊醒后退，对主角实力感到震撼且略有戒备"
-        },
-        "dialogueList": [
-          {
-            "id": "beat-12-1",
-            "speakerId": "narrator",
-            "speakerState": "剑气纵横 / 苦战击杀",
-            "text": "主角眼神一凛，拔刀横斩！凌厉的剑气劈碎噬魂兽硬甲，三头怪物尽数毙命。"
-          },
-          {
-            "id": "beat-12-2",
-            "speakerId": "char-alice",
-            "speakerState": "捂住伤口后退半步，警惕打量",
-            "text": "好强的剑术……你到底是什么人？也是为了王室秘宝而来的吗？"
-          }
-        ],
-        "endingType": "none",
-        "image": "",
-        "choices": []
-      }
+      "selected": false
     },
     {
       "id": "node-1-3",
       "type": "storyNode",
       "position": {
-        "x": 620,
-        "y": 380
+        "x": 643.6063613059808,
+        "y": 248.8535483001064
       },
       "data": {
         "code": "1.3",
@@ -173,28 +106,16 @@
         "endingType": "none",
         "image": "",
         "choices": []
-      }
+      },
+      "measured": {
+        "width": 320,
+        "height": 153
+      },
+      "selected": true,
+      "dragging": false
     }
   ],
   "edges": [
-    {
-      "id": "e-1-1.1",
-      "source": "node-1",
-      "target": "node-1-1",
-      "type": "conditionEdge",
-      "data": {
-        "condition": "好感度 +15 / 需消耗体力"
-      }
-    },
-    {
-      "id": "e-1-1.2",
-      "source": "node-1",
-      "target": "node-1-2",
-      "type": "conditionEdge",
-      "data": {
-        "condition": "武力值 >= 12"
-      }
-    },
     {
       "id": "e-1-1.3",
       "source": "node-1",

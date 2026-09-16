@@ -21,8 +21,49 @@ import {
   Pin,
   Layers,
   Wand2,
-  AlertCircle
+  AlertCircle,
+  Cpu,
+  Bot
 } from 'lucide-react';
+
+export const ANTIGRAVITY_MODELS = [
+  {
+    id: 'flash',
+    name: 'Gemini 3.8 Flash (High)',
+    shortName: 'Gemini 3.8 Flash',
+    tag: '极速推演 · 推荐',
+    tagColor: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    description: 'Google 原生主力极速高敏模型 · 响应极其迅捷，长文本分析出色，适合日常主线剧情推演与即时分支构思。',
+    iconColor: 'text-emerald-400'
+  },
+  {
+    id: 'pro',
+    name: 'Gemini 3.8 Pro',
+    shortName: 'Gemini 3.8 Pro',
+    tag: '深度思考 · 强逻辑',
+    tagColor: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+    description: 'Google 原生旗舰深度思考模型 · 具备强劲思维链 (Thinking)，专长于长线伏笔解构、复杂因果网与宏大世界观推演。',
+    iconColor: 'text-indigo-400'
+  },
+  {
+    id: 'flash_lite',
+    name: 'Gemini 3.8 Flash-Lite',
+    shortName: 'Gemini 3.8 Flash-Lite',
+    tag: '超低延迟 · 极速',
+    tagColor: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+    description: 'Google 原生轻量极速模型 · 毫秒级快速流式输出，适合角色对白润色、局部修辞优化与片段语法打磨。',
+    iconColor: 'text-cyan-400'
+  },
+  {
+    id: 'inherit',
+    name: '跟随 Antigravity 全局默认',
+    shortName: '跟随系统默认',
+    tag: '跟随主程序',
+    tagColor: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+    description: '自动同步您当前在 Antigravity 客户端设置中所选定的活跃模型（当前为 Gemini 3.8 Flash (High)）。',
+    iconColor: 'text-purple-400'
+  }
+];
 
 export default function StoryCopilot() {
   const isCopilotOpen = useStoryStore((s) => s.isCopilotOpen);
@@ -61,9 +102,26 @@ export default function StoryCopilot() {
   const [mentionFilter, setMentionFilter] = useState('');
   const [appliedActions, setAppliedActions] = useState(new Set());
   const [applyingActionId, setApplyingActionId] = useState(null);
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const [modelMenuPlacement, setModelMenuPlacement] = useState('header');
 
   const chatEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const modelMenuRef = useRef(null);
+
+  const activeModel = ANTIGRAVITY_MODELS.find((m) => m.id === copilotModel) || ANTIGRAVITY_MODELS[0];
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target) && !e.target.closest('[data-model-trigger]')) {
+        setShowModelMenu(false);
+      }
+    }
+    if (showModelMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showModelMenu]);
 
   useEffect(() => {
     if (isCopilotOpen) {
@@ -223,15 +281,79 @@ export default function StoryCopilot() {
 
         {/* Model Tier & Window Controls */}
         <div className="flex items-center gap-1.5 pl-2 shrink-0">
-          <select
-            value={copilotModel}
-            onChange={(e) => setCopilotModel(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-[11px] text-sky-400 font-medium outline-none focus:border-sky-500 cursor-pointer"
-            title="切换 Antigravity 原生模型"
-          >
-            <option value="flash">AGY Flash (极速推演)</option>
-            <option value="pro">AGY Pro (深度构思)</option>
-          </select>
+          {/* Antigravity Model Selector Dropdown Trigger (Header) */}
+          <div className="relative">
+            <button
+              type="button"
+              data-model-trigger="true"
+              onClick={() => {
+                setModelMenuPlacement('header');
+                setShowModelMenu(!showModelMenu);
+              }}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-slate-600 text-xs text-slate-200 transition-all cursor-pointer shadow-sm"
+              title={`当前 Antigravity 模型: ${activeModel.name}`}
+            >
+              <Cpu className={`w-3.5 h-3.5 ${activeModel.iconColor}`} />
+              <span className="font-semibold text-[11px] truncate max-w-[130px]">
+                {activeModel.shortName}
+              </span>
+              <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${showModelMenu && modelMenuPlacement === 'header' ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Model Dropdown Menu (Header Anchored) */}
+            {showModelMenu && modelMenuPlacement === 'header' && (
+              <div
+                ref={modelMenuRef}
+                className="absolute right-0 top-full mt-2 w-80 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md"
+              >
+                <div className="px-2 py-1.5 border-b border-slate-800 mb-1 flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-400 tracking-wider uppercase flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-sky-400" />
+                    Antigravity 模型选择
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">Google 原生引擎</span>
+                </div>
+
+                <div className="space-y-1">
+                  {ANTIGRAVITY_MODELS.map((m) => {
+                    const isSelected = (copilotModel || 'flash') === m.id;
+                    return (
+                      <div
+                        key={m.id}
+                        onClick={() => {
+                          setCopilotModel(m.id);
+                          setShowModelMenu(false);
+                        }}
+                        className={`p-2 rounded-lg cursor-pointer transition-all border ${
+                          isSelected
+                            ? 'bg-sky-950/50 border-sky-500/50 shadow-sm'
+                            : 'bg-transparent border-transparent hover:bg-slate-800/80 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Cpu className={`w-3.5 h-3.5 shrink-0 ${m.iconColor}`} />
+                            <span className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>
+                              {m.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${m.tagColor}`}>
+                              {m.tag}
+                            </span>
+                            {isSelected && <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
+                          </div>
+                        </div>
+                        <p className="text-[10.5px] text-slate-400 leading-snug pl-5">
+                          {m.description}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
 
           <button
             onClick={() => setIsDocked(!isDocked)}
@@ -374,6 +496,16 @@ export default function StoryCopilot() {
                   </div>
                 )}
 
+                {/* Assistant Model Badge */}
+                {!isUser && (
+                  <div className="flex items-center gap-1.5 mb-1.5 pb-1 border-b border-slate-750/70 text-[10px] text-slate-400">
+                    <Cpu className="w-3 h-3 text-sky-400 shrink-0" />
+                    <span className="font-semibold text-sky-300">
+                      {ANTIGRAVITY_MODELS.find((m) => m.id === (msg.model || copilotModel))?.name || 'Gemini 3.8 Flash (High)'}
+                    </span>
+                  </div>
+                )}
+
                 {/* Assistant Thinking Accordion */}
                 {!isUser && msg.thinking && (
                   <details className="mb-2 text-slate-400 bg-slate-900/60 rounded-lg border border-slate-750 overflow-hidden text-[11px]">
@@ -498,9 +630,84 @@ export default function StoryCopilot() {
           </button>
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-slate-500 px-1">
-          <span>提示：支持点击画布节点右上角【注入 Copilot】或点击下方预设</span>
-          <span>按 Enter 发送</span>
+        <div className="flex items-center justify-between text-[11px] text-slate-500 px-1 relative">
+          {/* Antigravity Model Selector Dropdown Trigger (Bottom Input Bar) */}
+          <div className="relative">
+            <button
+              type="button"
+              data-model-trigger="true"
+              onClick={() => {
+                setModelMenuPlacement('bottom');
+                setShowModelMenu(!showModelMenu);
+              }}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer group shadow-sm"
+              title="切换 Antigravity 原生模型"
+            >
+              <Cpu className={`w-3.5 h-3.5 ${activeModel.iconColor} group-hover:scale-110 transition-transform`} />
+              <span className="text-[11px] font-semibold text-slate-200 group-hover:text-white">
+                {activeModel.name}
+              </span>
+              <ChevronDown className={`w-3 h-3 text-slate-400 group-hover:text-slate-200 transition-transform ${showModelMenu && modelMenuPlacement === 'bottom' ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Model Dropdown Menu (Bottom Anchored) */}
+            {showModelMenu && modelMenuPlacement === 'bottom' && (
+              <div
+                ref={modelMenuRef}
+                className="absolute left-0 bottom-full mb-2 w-84 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md"
+              >
+                <div className="px-2 py-1.5 border-b border-slate-800 mb-1 flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-400 tracking-wider uppercase flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-sky-400" />
+                    Antigravity 模型选择
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">Google 原生引擎</span>
+                </div>
+
+                <div className="space-y-1">
+                  {ANTIGRAVITY_MODELS.map((m) => {
+                    const isSelected = (copilotModel || 'flash') === m.id;
+                    return (
+                      <div
+                        key={m.id}
+                        onClick={() => {
+                          setCopilotModel(m.id);
+                          setShowModelMenu(false);
+                        }}
+                        className={`p-2 rounded-lg cursor-pointer transition-all border ${
+                          isSelected
+                            ? 'bg-sky-950/50 border-sky-500/50 shadow-sm'
+                            : 'bg-transparent border-transparent hover:bg-slate-800/80 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Cpu className={`w-3.5 h-3.5 shrink-0 ${m.iconColor}`} />
+                            <span className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>
+                              {m.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${m.tagColor}`}>
+                              {m.tag}
+                            </span>
+                            {isSelected && <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
+                          </div>
+                        </div>
+                        <p className="text-[10.5px] text-slate-400 leading-snug pl-5">
+                          {m.description}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 text-slate-500 text-[11px]">
+            <span>按 Enter 发送，Shift+Enter 换行</span>
+          </div>
         </div>
       </div>
     </div>
